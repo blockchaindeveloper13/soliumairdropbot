@@ -1,6 +1,7 @@
 import os
 import logging
 import sqlite3
+import asyncio
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -12,17 +13,14 @@ from telegram.ext import (
     ContextTypes
 )
 
-# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 flask_app = Flask(__name__)
 
-# Configuration
 logger.info("Loading configuration")
 try:
     BOT_TOKEN = os.environ['BOT_TOKEN']
@@ -34,7 +32,6 @@ except Exception as e:
     logger.error(f"Configuration error: {e}")
     raise
 
-# Database setup
 def get_db():
     logger.info("Connecting to database")
     try:
@@ -72,7 +69,6 @@ def init_db():
         logger.error(f"Database initialization error: {e}")
         raise
 
-# Initialize Telegram bot
 logger.info("Initializing Telegram bot")
 try:
     application = Application.builder().token(BOT_TOKEN).build()
@@ -81,7 +77,6 @@ except Exception as e:
     logger.error(f"Telegram bot initialization error: {e}")
     raise
 
-# ===== HANDLERS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -125,17 +120,18 @@ async def show_menu(update: Update, text: str):
             [InlineKeyboardButton("📋 Rules", callback_data='rules')],
             [InlineKeyboardButton("🎁 Claim", callback_data='claim')]
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         logger.info(f"Menu keyboard: {keyboard}")
         
         if update.message:
             await update.message.reply_text(
                 text,
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=reply_markup)
             logger.info("Menu sent via reply_text")
         else:
             await update.callback_query.edit_message_text(
                 text,
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=reply_markup)
             logger.info("Menu sent via edit_message_text")
     except Exception as e:
         logger.error(f"Menu sending error: {e}")
@@ -229,18 +225,18 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         
         keyboard.append([InlineKeyboardButton("🔍 Verify Tasks", callback_data='verify')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
         logger.info(f"Tasks keyboard: {keyboard}")
         
         await update.callback_query.edit_message_text(
             "🎯 Complete these tasks:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=reply_markup
         )
         logger.info(f"Tasks sent: user_id={user_id}")
     except Exception as e:
         logger.error(f"Show tasks error: {e}")
         raise
 
-# ===== FLASK ROUTES =====
 @flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
 async def webhook():
     logger.info("Webhook request received")
@@ -264,7 +260,6 @@ def index():
         logger.error(f"Index error: {e}")
         raise
 
-# ===== MAIN SETUP =====
 def setup_handlers():
     logger.info("Setting up handlers")
     try:
@@ -276,7 +271,7 @@ def setup_handlers():
         logger.error(f"Handler setup error: {e}")
         raise
 
-def main():
+async def main():
     logger.info("Starting application")
     try:
         init_db()
@@ -292,7 +287,7 @@ def main():
 if __name__ == '__main__':
     logger.info("Running main")
     try:
-        main()
+        asyncio.run(main())
         logger.info("Main executed successfully")
     except Exception as e:
         logger.error(f"Main execution error: {e}")
