@@ -1,7 +1,6 @@
 import os
 import logging
 import sqlite3
-import asyncio
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -13,19 +12,29 @@ from telegram.ext import (
     ContextTypes
 )
 
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# Initialize Flask app
 flask_app = Flask(__name__)
 
-BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', '1616739367'))
-CHANNEL_ID = '@soliumcoin'
-GROUP_ID = '@soliumcoinchat'
+# Configuration
+logger.info("Loading configuration")
+try:
+    BOT_TOKEN = os.environ['BOT_TOKEN']
+    ADMIN_ID = int(os.environ['ADMIN_ID'])
+    CHANNEL_ID = '@soliumcoin'
+    GROUP_ID = '@soliumcoinchat'
+    logger.info("Configuration loaded")
+except Exception as e:
+    logger.error(f"Configuration error: {e}")
+    raise
 
+# Database setup
 def get_db():
     logger.info("Connecting to database")
     try:
@@ -48,13 +57,13 @@ def init_db():
                     x_username TEXT,
                     balance INTEGER DEFAULT 0,
                     referrals INTEGER DEFAULT 0,
-                    participated BOOLEAN DEFAULT 0,
+                    participated BOOLEAN DEFAULT FALSE,
                     referrer_id INTEGER,
-                    task1_completed BOOLEAN DEFAULT 0,
-                    task2_completed BOOLEAN DEFAULT 0,
-                    task3_completed BOOLEAN DEFAULT 0,
-                    task4_completed BOOLEAN DEFAULT 0,
-                    task5_completed BOOLEAN DEFAULT 0
+                    task1_completed BOOLEAN DEFAULT FALSE,
+                    task2_completed BOOLEAN DEFAULT FALSE,
+                    task3_completed BOOLEAN DEFAULT FALSE,
+                    task4_completed BOOLEAN DEFAULT FALSE,
+                    task5_completed BOOLEAN DEFAULT FALSE
                 )
             ''')
             db.commit()
@@ -63,6 +72,7 @@ def init_db():
         logger.error(f"Database initialization error: {e}")
         raise
 
+# Initialize Telegram bot
 logger.info("Initializing Telegram bot")
 try:
     application = Application.builder().token(BOT_TOKEN).build()
@@ -71,6 +81,7 @@ except Exception as e:
     logger.error(f"Telegram bot initialization error: {e}")
     raise
 
+# ===== HANDLERS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
@@ -90,8 +101,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             (referrer_id,)
                         )
                         logger.info(f"Referral added: user_id={user.id}, referrer_id={referrer_id}")
-                except ValueError as e:
-                    logger.error(f"Referral parsing error: {e}")
+                except ValueError:
+                    logger.error("Referral parsing error")
             
             db.execute(
                 "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
@@ -114,14 +125,17 @@ async def show_menu(update: Update, text: str):
             [InlineKeyboardButton("📋 Rules", callback_data='rules')],
             [InlineKeyboardButton("🎁 Claim", callback_data='claim')]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
         logger.info(f"Menu keyboard: {keyboard}")
         
         if update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+            await update.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard))
             logger.info("Menu sent via reply_text")
         else:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+            await update.callback_query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard))
             logger.info("Menu sent via edit_message_text")
     except Exception as e:
         logger.error(f"Menu sending error: {e}")
@@ -132,6 +146,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Button clicked: data={query.data}, user_id={query.from_user.id}")
     try:
         await query.answer()
+        
         if query.data == 'balance':
             with get_db() as db:
                 balance = db.execute(
@@ -167,6 +182,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Rules sent: user_id={query.from_user.id}")
         elif query.data == 'claim':
             await handle_claim(update, context)
+        
         await show_menu(update, "Main Menu:")
     except Exception as e:
         logger.error(f"Button handler error: {e}")
@@ -213,26 +229,26 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         
         keyboard.append([InlineKeyboardButton("🔍 Verify Tasks", callback_data='verify')])
-        reply_markup = InlineKeyboardMarkup(keyboard)
         logger.info(f"Tasks keyboard: {keyboard}")
         
         await update.callback_query.edit_message_text(
             "🎯 Complete these tasks:",
-            reply_markup=reply_markup
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         logger.info(f"Tasks sent: user_id={user_id}")
     except Exception as e:
         logger.error(f"Show tasks error: {e}")
         raise
 
-@flask_app.route('/webhook', methods=['POST'])
-def webhook():
+# ===== FLASK ROUTES =====
+@flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
+async def webhook():
     logger.info("Webhook request received")
     try:
         json_data = request.get_json()
         logger.info(f"Webhook data: {json_data}")
         update = Update.de_json(json_data, application.bot)
-        asyncio.run(application.process_update(update))
+        await application.process_update(update)
         logger.info("Webhook processed")
         return '', 200
     except Exception as e:
@@ -248,6 +264,7 @@ def index():
         logger.error(f"Index error: {e}")
         raise
 
+# ===== MAIN SETUP =====
 def setup_handlers():
     logger.info("Setting up handlers")
     try:
@@ -259,7 +276,7 @@ def setup_handlers():
         logger.error(f"Handler setup error: {e}")
         raise
 
-async def main():
+def main():
     logger.info("Starting application")
     try:
         init_db()
@@ -275,7 +292,7 @@ async def main():
 if __name__ == '__main__':
     logger.info("Running main")
     try:
-        asyncio.run(main())
+        main()
         logger.info("Main executed successfully")
     except Exception as e:
         logger.error(f"Main execution error: {e}")
