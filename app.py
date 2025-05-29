@@ -27,7 +27,7 @@ conn.commit()
 
 # Bot ve Dispatcher
 bot = Bot(BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0)
+dispatcher = Dispatcher(bot, None, workers=1)  # workers=1 ile asenkron destek
 
 def start(update, context):
     user_id = update.message.from_user.id
@@ -286,6 +286,7 @@ def main():
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
 if __name__ == '__main__':
+    main()  # Handler'ları başlat
     # Heroku port
     port = int(os.environ.get('PORT', 8443))
     app.run(host='0.0.0.0', port=port)
