@@ -63,7 +63,13 @@ def init_db():
         logger.error(f"Database initialization error: {e}")
         raise
 
-application = Application.builder().token(BOT_TOKEN).build()
+logger.info("Initializing Telegram bot")
+try:
+    application = Application.builder().token(BOT_TOKEN).build()
+    logger.info("Telegram bot initialized")
+except Exception as e:
+    logger.error(f"Telegram bot initialization error: {e}")
+    raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -236,7 +242,11 @@ def webhook():
 @flask_app.route('/')
 def index():
     logger.info("Index page accessed")
-    return "🤖 Bot is running!"
+    try:
+        return "🤖 Bot is running!"
+    except Exception as e:
+        logger.error(f"Index error: {e}")
+        raise
 
 def setup_handlers():
     logger.info("Setting up handlers")
@@ -263,4 +273,10 @@ async def main():
         raise
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    logger.info("Running main")
+    try:
+        asyncio.run(main())
+        logger.info("Main executed successfully")
+    except Exception as e:
+        logger.error(f"Main execution error: {e}")
+        raise
