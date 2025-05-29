@@ -572,6 +572,7 @@ def export_addresses(update, context):
     conn.close()
 
 # Webhook endpointini bu şekilde güncelle
+# Webhook endpoint
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
     json_data = request.get_json()
@@ -580,16 +581,20 @@ def webhook():
     dispatcher.process_update(update)
     return 'ok', 200
 
-# Yeni root endpoint
+# Tek bir root endpoint olacak şekilde düzenle
 @app.route('/')
 def index():
     webhook_url = f"https://soliumairdropbot-ef7a2a4b1280-0071788c2efa.herokuapp.com/{BOT_TOKEN}"
+    webhook_info_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
+    
     return f"""
     <h1>🤖 Solium Airdrop Bot</h1>
     <p>Webhook URL: <code>{webhook_url}</code></p>
     <p>Durum: <strong>AKTİF</strong></p>
-    <a href="https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo" target="_blank">Webhook Bilgilerini Kontrol Et</a>
+    <a href="{webhook_info_url}" target="_blank">Webhook Bilgilerini Kontrol Et</a>
+    <p>Botu kullanmak için Telegram'da <a href="https://t.me/{bot.username}" target="_blank">@{bot.username}</a> adresini ziyaret et</p>
     """
+
 # Kök endpoint
 @app.route('/')
 def index():
