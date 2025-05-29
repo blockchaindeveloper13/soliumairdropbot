@@ -17,9 +17,8 @@ flask_app = Flask(__name__)  # Flask nesnesi
 # Ortam değişkenleri
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '1616739367'))
-CHANNEL_ID = os.getenv('CHANNEL_ID', '@solumu')
-GROUP_ID = os.getenv('GROUP_ID', '@solulu')
-APP_NAME = os.getenv('APP_NAME', 'soliumairdropbot-ef7a2a4b1280')
+CHANNEL_ID = '@soliumcoin'  # Sabit
+GROUP_ID = '@soliumcoinchat'  # Sabit
 
 # Veritabanı bağlantısı
 def get_db_connection():
@@ -129,9 +128,9 @@ async def button_callback(update: Update, context):
     elif query.data == 'terms':
         terms = (
             "📋 Airdrop Şartları:\n\n"
-            "1️⃣ Telegram grubuna katıl (@solulu) - 20 Solium\n"
-            "2️⃣ Telegram kanalını takip et (@solumu) - 20 Solium\n"
-            "3️⃣ X hesabını takip et (@solumu) - 20 Solium\n"
+            "1️⃣ Telegram grubuna katıl (@soliumcoinchat) - 20 Solium\n"
+            "2️⃣ Telegram kanalını takip et (@soliumcoin) - 20 Solium\n"
+            "3️⃣ X hesabını takip et (@soliumcoin) - 20 Solium\n"
             "4️⃣ X pinned postu RT yap - 20 Solium\n"
             "5️⃣ WhatsApp kanalına katıl - 20 Solium\n\n"
             "💎 Bonus: Her davet ettiğin arkadaşın için 20 Solium kazanırsın!\n"
@@ -266,7 +265,7 @@ async def handle_task(update: Update, context):
             await query.message.reply_text("❌ Kanal kontrolü sırasında hata! Daha sonra dene.")
     
     elif task_data == 'task3':
-        await query.message.reply_text("🔍 X hesabını takip ettiğini doğrulamak için\n\nLütfen X kullanıcı adını (@ ile) gönder:\nÖrnek: @solumu")
+        await query.message.reply_text("🔍 X hesabını takip ettiğini doğrulamak için\n\nLütfen X kullanıcı adını (@ ile) gönder:\nÖrnek: @soliumcoin")
         context.user_data['awaiting_x_username'] = True
     
     elif task_data == 'task4':
@@ -347,7 +346,7 @@ async def handle_message(update: Update, context):
             context.user_data['awaiting_x_username'] = False
             await show_tasks(update, context)
         else:
-            await update.message.reply_text("❌ Geçersiz X kullanıcı adı!\n\n@ ile başlayan ad gönder.\nÖrnek: @solumu")
+            await update.message.reply_text("❌ Geçersiz X kullanıcı adı!\n\n@ ile başlayan ad gönder.\nÖrnek: @soliumcoin")
     
     conn.close()
 
@@ -414,7 +413,7 @@ def webhook():
 # Kök endpoint
 @flask_app.route('/')
 def index():
-    webhook_url = f"https://{APP_NAME}.herokuapp.com/webhook"
+    webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"  # Sabit URL
     try:
         asyncio.run_coroutine_threadsafe(bot_application.bot.set_webhook(url=webhook_url), bot_application.loop).result()
         logger.info(f"Webhook ayarlandı: {webhook_url}")
