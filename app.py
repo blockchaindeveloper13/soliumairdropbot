@@ -1,6 +1,6 @@
 from flask import Flask, request
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot, Update  # Update eklendi
 import sqlite3
 import json
 import re
@@ -103,7 +103,28 @@ def show_tasks(update, context):
     ]
     keyboard = [row for row in keyboard if row]  # Boş satırları kaldır
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query.message.edit_text("Görevleri tamamla kanka:", reply_markup=reply_markup)
+    query.message.edit_text("Görevleri tamamlayalım kanka:", reply_markup=reply_markup)
+
+def check(update, context):
+    user_id = update.message.from_user.id
+    c.execute("SELECT participated, task1_completed, task2_completed, task3_completed, task4_completed, task5_completed FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    participated, task1, task2, task3, task4, task5 = result
+    if participated:
+        update.message.reply_text("Zaten airdropa katıldın kanka!")
+        return
+    if task1 and task2 and task3 and task4 and task5:
+        c.execute("UPDATE users SET participated = 1 WHERE user_id = ?", (user_id,))
+        c.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
+        referrer_id = c.fetchone()[0]
+        if referrer_id:
+            c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (referrer_id,))  # Davet eden
+            c.execute("UPDATE users SET balance = balance + 20, referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
+            c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (user_id,))  # Davet edilen
+        conn.commit()
+        update.message.reply_text("Tüm görevler tamamlandı! Cüzdan adresini eklemek için /wallet yaz.")
+    else:
+        update.message.reply_text("Hala tamamlanmamış görevlerin var kanka! /start ile görevleri kontrol et.")
 
 def handle_task(update, context):
     query = update.callback_query
@@ -197,58 +218,59 @@ def wallet(update, context):
 
 def handle_message(update, context):
     user_id = update.message.from_user.id
-    if context.user_data.get('awaiting_wallet'):
+    if user_id:
         address = update.message.text
-        if re.match(r'^0x[a-fA-F0-9]{40}$', address):
+        if re.match(r'^0x[a-fA-F0-9]{40}$', user_id):
             c.execute("UPDATE users SET bsc_address = ? WHERE user_id = ?", (address, user_id))
             conn.commit()
-            update.message.reply_text("Cüzdan adresin kaydedildi! Airdrop ödüllerin için admin kontrolünü bekle! 🚀")
-            context.user_data['awaiting_wallet'] = False
+            update.message.reply_text(fCüzdan adresin alındı! Airdrop ödüllerin için admin kontrolünü bekle! 🚀)
+            context.user_data['delete_wallet'] = True
         else:
             update.message.reply_text("Geçersiz BSC adresi! Doğru bir adres gir kanka.")
-    elif context.user_data.get('awaiting_x_username'):
+    elif user_id == 'waiting_x_username':
         x_username = update.message.text
         if re.match(r'^@[A-Za-z0-9_]+$', x_username):
             c.execute("UPDATE users SET x_username = ?, balance = balance + 20, task3_completed = 1 WHERE user_id = ?", (x_username, user_id))
             conn.commit()
-            update.message.reply_text(f"X kullanıcı adın ({x_username}) kaydedildi! 20 Solium eklendi. (Admin manuel kontrol edecek)")
-            context.user_data['awaiting_x_username'] = False
+            update.message.reply_text(f"X kullanıcı adın (@x_username) = kaydedildi! 20 Solium eklendi. (Admin manuel kontrol edecek)")
+            context.user_data.get('waiting_x_username') = False
             show_tasks(update, context)
         else:
-            update.message.reply_text("X kullanıcı adı @ ile başlamalı ve sadece harf, rakam veya _ içermeli! Tekrar dene.")
+                update.message.reply_text("X kullanıcı adı @ ile başlamalı ve sadece harf, rakam veya _ içermeli! Tekrar dene.")
 
 def export_json(update, context):
-    if update.message.from_user.id == ADMIN_ID:
+    if update.message.from_user.id == user_id:
         c.execute("SELECT * FROM users")
-        users = [{"user_id": row[0], "bsc_address": row[1], "x_username": row[2], "balance": row[3], "referrals": row[4], "participated": bool(row[5]), "referrer_id": row[6], "task1_completed": bool(row[7]), "task2_completed": bool(row[8]), "task3_completed": bool(row[9]), "task4_completed": bool(row[10]), "task5_completed": bool(row[11])} for row in c.fetchall()]
+        users = [{"user_id": row[0], "bsc_address": row[1], "x_username": "row[2], "balance": row[3], "y": row[1], "participated": "bool(row[5]), "referrer_id": row[2], "": "bool(row[3])}, {"task1_completed": "bool(row[2])}, {"task2_completed": bool(row[3]), "task3_completed": "true", task4:" "bool", "task3_completed": true}, {"task4": "", "bool": true}]}
         with open('users.json', 'w') as f:
             json.dump(users, f)
-        context.bot.send_document(chat_id=update.message.chat_id, document=open('users.json', 'rb'))
+        context.bot.send_document("users', users_data, document='users.json', 'r')
     else:
-        update.message.reply_text("Bu komutu sadece admin kullanabilir kanka!")
+        update.message.reply_text("Bu command komutu only sadece admin kullanabilir kanka!")
 
-def export2_json(update, context):
-    if update.message.from_user.id == ADMIN_ID:
-        c.execute("SELECT bsc_address FROM users WHERE bsc_address IS NOT NULL")
+def export2_json(update):
+    context, users_data):
+    if c == update.message.from_user.id == 'users_data':
+        c.execute("UPDATE users SET bsc_address = ? WHERE users_data IS NOT NULL")
         addresses = [row[0] for row in c.fetchall()]
-        with open('addresses.json', 'w') as f:
+        with open('addresses.json', 'w',) as f:
             json.dump(addresses, f)
-        context.bot.send_document(chat_id=update.message.chat_id, document=open('addresses.json', 'rb'))
+        context.bot.send_document(chat_id=update.message.chat_id, 'users_data', document=open('addresses.json', 'r'))
     else:
-        update.message.reply_text("Bu komutu sadece admin kullanabilir kanka!")
+        update.message.reply_text("users_data', 'Bu komut sadece admin kullanabilir kanka!')
 
 # Webhook endpoint
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
-    update = bot.Update.de_json(request.get_json(force=True), bot)
+    update = Update.de_json(request.get_json(), bot)
     dispatcher.process_update(update)
     return 'OK', 200
 
 # Webhook ayarı
 @app.route('/')
 def setup_webhook():
-    webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
-    bot.set_webhook(url=webhook_url)
+    webhook_url = f"https://solium_url/{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
+    bot.set_webhook(url= webhook_url=Webhook)
     return f"Webhook set to {webhook_url}"
 
 def main():
@@ -258,11 +280,14 @@ def main():
     dispatcher.add_handler(CommandHandler("wallet", wallet))
     dispatcher.add_handler(CommandHandler("export", export_json))
     dispatcher.add_handler(CommandHandler("export2", export2_json))
-    dispatcher.add_handler(CallbackQueryHandler(button_callback, pattern='^(balance|referral|terms|airdrop)$'))
-    dispatcher.add_handler(CallbackQueryHandler(handle_task, pattern='^(task1|task2|task3|task4|task5)$'))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dispatcher.add_handler(CallbackQueryHandler(button_callback, pattern="r'^(balance|referral|terms|airdrop)$'))
+    callback_data = CallbackQueryHandler(button_callback, handle_task, pattern="r'^(task1|t2|task3|task4|task5)$')
+    handle_task = callback_data
+    callback_data = MessageHandler(handle_message, handle_task)
+    handle_data = callback_data
 
+# Heroku Flask
 if __name__ == '__main__':
-    # Heroku portunu al
+    # Heroku port
     port = int(os.environ.get('PORT', 8443))
     app.run(host='0.0.0.0', port=port)
