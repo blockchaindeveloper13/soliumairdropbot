@@ -77,6 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
             except ValueError:
                 pass
+        
         db.execute(
             "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
             (user.id,)
@@ -96,11 +97,89 @@ async def show_menu(update: Update, text: str):
     if update.message:
         await update.message.reply_text(
             text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.callback_query.edit_message_text(
             text,
             reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'balance':
+        with get_db() as db:
+            balance = db.execute(
+                "SELECT balance FROM users WHERE user_id = ?",
+                (query.from_user.id,)
+            ).fetchone()['balance']
+        await query.message.reply_text(f"💰 Your balance: {balance} SOLIUM")
+    elif query.data == 'referral':
+        with get_db() as db:
+            referrals = db.execute(
+                "SELECT referrals FROM users WHERE user_id = ?",
+                (query.from_user.id,)
+            ).fetchone()['referrals']
+        bot_username = (await context.bot.get_me()).username
+        await query.message.reply_text(
+            f"📢 Your referral link:\n"
+            f"https://t.me/{bot_username}?start=ref{query.from_user.id}\n\n"
+            f"👥 Total referrals: {referrals}"
+        )
+    elif query.data == 'rules':
+        rules = (
+            "📋 Airdrop Rules:\n\n"
+            "1. Join our Telegram group\n"
+            "2. Follow our Telegram channel\n"
+            "3. Follow us on X\n"
+            "4. Retweet pinned post\n"
+            "5. Join WhatsApp channel\n\n"
+            "💎 Bonus: 20 SOLIUM per referral!"
+        )
+        await query.message.reply_text(rules)
+    elif query.data == 'claim':
+        await handle_claim(update, context)
+    
+    await show_menu(update, "Main Menu:")
+
+async def handle_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.callback_query.from_user.id
+    with get_db() as db:
+        participated = db.execute(
+            "SELECT participated FROM users WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()['participated']
+        
+        if participated:
+            await update.callback_query.message.reply_text("🎉 You already claimed!")
+        else:
+            await show_tasks(update, context)
+
+async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.callback_query.from_user.id
+    with get_db() as db:
+        tasks = db.execute(
+            "SELECT task1_completed, task2_completed, task3_completed, "
+            "task4_completed, task5_completed FROM users WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+    
+    keyboard = []
+    for i in range(1, 6):
+        completed = tasks[f'task{i}_completed']
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{i}. Task {i} {'✅' if completed else '❌'}",
+                callback_data=f'task{i}'
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("🔍 Verify Tasks", callback_data='verify')])
+    
+    await update.callback_query.edit_message_text(
+        "🎯 Complete these tasks:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ===== FLASK ROUTES =====
 @flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
@@ -112,24 +191,20 @@ async def webhook():
 
 @flask_app.route('/')
 def index():
-    return "Bot is running!"
+    return "🤖 Bot is running!"
 
 # ===== MAIN SETUP =====
 def setup_handlers():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 def main():
     init_db()
     setup_handlers()
     
-    # Set webhook on startup
-    webhook_url = f"https://{os.environ['APP_NAME']}.herokuapp.com/{BOT_TOKEN}"
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get('PORT', 8443)),
-        webhook_url=webhook_url
-    )
+    port = int(os.environ.get('PORT', 8443))
+    flask_app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
