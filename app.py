@@ -238,13 +238,13 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raise
 
 @flask_app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     logger.info("Webhook request received")
     try:
         json_data = request.get_json()
         logger.info(f"Webhook data: {json_data}")
         update = Update.de_json(json_data, application.bot)
-        await application.process_update(update)
+        asyncio.run(application.process_update(update))
         logger.info("Webhook processed")
         return '', 200
     except Exception as e:
