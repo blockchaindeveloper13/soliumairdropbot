@@ -1,6 +1,6 @@
 from flask import Flask, request
-from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import sqlite3
 import json
 import re
@@ -46,12 +46,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Bot ve Dispatcher
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot=bot, update_queue=None, workers=1)
-
 # /start komutu
-def start(update, context):
+async def start(update: Update, context):
+    logger.info(f"Start komutu alındı: user_id={update.message.from_user.id}")
     user_id = update.message.from_user.id
     args = context.args
     referrer_id = None
@@ -93,10 +90,10 @@ def start(update, context):
     
     conn.commit()
     conn.close()
-    show_main_menu(update, context)
+    await show_main_menu(update, context)
 
 # Ana menüyü göster
-def show_main_menu(update, context):
+async def show_main_menu(update: Update, context):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     
     keyboard = [
@@ -107,17 +104,23 @@ def show_main_menu(update, context):
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
+    logger.info(f"Main menu gönderiliyor: user_id={user_id}, keyboard={keyboard}")
     
-    if update.message:
-        update.message.reply_text("🚀 Solium Airdrop Botuna Hoşgeldin! Menüden bir seçenek seç:", reply_markup=reply_markup)
-    else:
-        update.callback_query.message.edit_text("🚀 Solium Airdrop Botu - Ana Menü:", reply_markup=reply_markup)
+    try:
+        if update.message:
+            await update.message.reply_text("🚀 Solium Airdrop Botuna Hoşgeldin! Menüden bir seçenek seç:", reply_markup=reply_markup)
+        else:
+            await update.callback_query.message.edit_text("🚀 Solium Airdrop Botu - Ana Menü:", reply_markup=reply_markup)
+        logger.info(f"Main menu başarıyla gönderildi: user_id={user_id}")
+    except Exception as e:
+        logger.error(f"Main menu gönderim hatası: user_id={user_id}, hata={e}")
+        raise
 
 # Buton callback'leri
-def button_callback(update, context):
+async def button_callback(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
-    query.answer()
+    await query.answer()
     logger.info(f"Buton tıklandı: user_id={user_id}, data={query.data}")
 
     conn = get_db_connection()
@@ -127,15 +130,16 @@ def button_callback(update, context):
         c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         result = c.fetchone()
         balance = result['balance'] if result else 0
-        query.message.reply_text(f"💰 Toplam Bakiyen: {balance} Solium")
+        await query.message.reply_text(f"💰 Toplam Bakiyen: {balance} Solium")
         
     elif query.data == 'referral':
         c.execute("SELECT referrals FROM users WHERE user_id = ?", (user_id,))
         result = c.fetchone()
         referrals = result['referrals'] if result else 0
-        query.message.reply_text(
+        bot_username = (await context.bot.get_me()).username
+        await query.message.reply_text(
             f"📢 Referans Bilgileri:\n\n"
-            f"🔗 Referans Linkin: https://t.me/{bot.username}?start=ref{user_id}\n"
+            f"🔗 Referans Linkin: https://t.me/{bot_username}?start=ref{user_id}\n"
             f"👥 Davet Ettiğin Kişi Sayısı: {referrals}\n\n"
             f"Her davet ettiğin kişi için 20 Solium kazanırsın!"
         )
@@ -151,7 +155,7 @@ def button_callback(update, context):
             "💎 Bonus: Her davet ettiğin arkadaşın için 20 Solium kazanırsın!\n"
             "Arkadaşın görevleri tamamlarsa ekstra 20 Solium daha kazanırsın!"
         )
-        query.message.reply_text(terms)
+        await query.message.reply_text(terms)
         
     elif query.data == 'airdrop':
         c.execute("SELECT participated FROM users WHERE user_id = ?", (user_id,))
@@ -159,15 +163,15 @@ def button_callback(update, context):
         participated = result['participated'] if result else False
         
         if participated:
-            query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
+            await query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
         else:
-            show_tasks(update, context)
+            await show_tasks(update, context)
     
     conn.close()
-    show_main_menu(update, context)
+    await show_main_menu(update, context)
 
 # Görevleri göster
-def show_tasks(update, context):
+async def show_tasks(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -217,7 +221,7 @@ def show_tasks(update, context):
     keyboard = [row for row in keyboard if row[0] is not None]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query.message.edit_text(
+    await query.message.edit_text(
         "🎯 Airdrop Görevleri:\n\n"
         "Aşağıdaki görevleri tamamlayarak Solium kazanabilirsin!\n"
         "Görevleri tamamladıktan sonra 'Görevleri Kontrol Et' butonuna bas.",
@@ -226,10 +230,10 @@ def show_tasks(update, context):
     conn.close()
 
 # Görev kontrol
-def check_tasks(update, context):
+async def check_tasks(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
-    query.answer()
+    await query.answer()
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -241,7 +245,7 @@ def check_tasks(update, context):
     result = c.fetchone()
     
     if result['participated']:
-        query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
+        await query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
         conn.close()
         return
     
@@ -255,7 +259,8 @@ def check_tasks(update, context):
     
     if all_tasks_completed:
         c.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
-        referrer_id = c.fetchone()['referrer_id'] if c.fetchone() else None
+        result = c.fetchone()
+        referrer_id = result['referrer_id'] if result else None
         
         if referrer_id:
             c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (referrer_id,))
@@ -267,25 +272,25 @@ def check_tasks(update, context):
         """, (user_id,))
         conn.commit()
         
-        query.message.reply_text(
+        await query.message.reply_text(
             "🎉 TEBRİKLER! Tüm görevleri tamamladın!\n\n"
             "Toplam kazandığın: 100 Solium\n"
             "BSC cüzdan adresini göndermek için /wallet yaz."
         )
     else:
-        query.message.reply_text(
+        await query.message.reply_text(
             "❌ Henüz tüm görevleri tamamlamadın!\n\n"
             "Görevleri tamamladığından emin ol ve tekrar kontrol et."
         )
     
     conn.close()
-    show_main_menu(update, context)
+    await show_main_menu(update, context)
 
 # Görev işleme
-def handle_task(update, context):
+async def handle_task(update: Update, context):
     query = update.callback_query
     user_id = query.from_user.id
-    query.answer()
+    await query.answer()
     logger.info(f"Görev işleniyor: user_id={user_id}, task={query.data}")
     
     conn = get_db_connection()
@@ -295,7 +300,7 @@ def handle_task(update, context):
     participated = c.fetchone()['participated']
     
     if participated:
-        query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
+        await query.message.reply_text("🎉 Zaten airdropa katıldın! Ödüllerin dağıtımı için bekliyoruz.")
         conn.close()
         return
     
@@ -303,7 +308,7 @@ def handle_task(update, context):
     
     if task_data == 'task1':
         try:
-            member = bot.get_chat_member(GROUP_ID, user_id)
+            member = await context.bot.get_chat_member(GROUP_ID, user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 c.execute("""
                     UPDATE users 
@@ -311,25 +316,25 @@ def handle_task(update, context):
                     WHERE user_id = ?
                 """, (user_id,))
                 conn.commit()
-                query.message.reply_text(
+                await query.message.reply_text(
                     "✅ Telegram grubu görevi tamamlandı!\n"
                     "+20 Solium kazandın!"
                 )
             else:
-                query.message.reply_text(
+                await query.message.reply_text(
                     f"❌ {GROUP_ID} grubuna katılmamışsın!\n\n"
                     f"Gruba katıldıktan sonra tekrar dene."
                 )
         except Exception as e:
             logger.error(f"Telegram grup kontrol hatası: {e}")
-            query.message.reply_text(
+            await query.message.reply_text(
                 "❌ Grup kontrolü sırasında bir hata oluştu!\n"
                 "Lütfen daha sonra tekrar dene."
             )
     
     elif task_data == 'task2':
         try:
-            member = bot.get_chat_member(CHANNEL_ID, user_id)
+            member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 c.execute("""
                     UPDATE users 
@@ -337,24 +342,24 @@ def handle_task(update, context):
                     WHERE user_id = ?
                 """, (user_id,))
                 conn.commit()
-                query.message.reply_text(
+                await query.message.reply_text(
                     "✅ Telegram kanalı görevi tamamlandı!\n"
                     "+20 Solium kazandın!"
                 )
             else:
-                query.message.reply_text(
+                await query.message.reply_text(
                     f"❌ {CHANNEL_ID} kanalına katılmamışsın!\n\n"
                     f"Kanala katıldıktan sonra tekrar dene."
                 )
         except Exception as e:
             logger.error(f"Telegram kanal kontrol hatası: {e}")
-            query.message.reply_text(
+            await query.message.reply_text(
                 "❌ Kanal kontrolü sırasında bir hata oluştu!\n"
                 "Lütfen daha sonra tekrar dene."
             )
     
     elif task_data == 'task3':
-        query.message.reply_text(
+        await query.message.reply_text(
             "🔍 X (Twitter) hesabını takip ettiğini doğrulamak için\n\n"
             "Lütfen X kullanıcı adını (@ ile başlayarak) gönder:\n"
             "Örnek: @soliumcoin"
@@ -368,7 +373,7 @@ def handle_task(update, context):
             WHERE user_id = ?
         """, (user_id,))
         conn.commit()
-        query.message.reply_text(
+        await query.message.reply_text(
             "✅ X pinned post RT görevi kaydedildi!\n"
             "+20 Solium kazandın!\n\n"
             "Not: Adminler tarafından manuel olarak kontrol edilecektir."
@@ -381,17 +386,17 @@ def handle_task(update, context):
             WHERE user_id = ?
         """, (user_id,))
         conn.commit()
-        query.message.reply_text(
+        await query.message.reply_text(
             "✅ WhatsApp kanalı görevi kaydedildi!\n"
             "+20 Solium kazandın!\n\n"
             "Not: Adminler tarafından manuel olarak kontrol edilecektir."
         )
     
     conn.close()
-    show_tasks(update, context)
+    await show_tasks(update, context)
 
 # Cüzdan adresi alma
-def wallet(update, context):
+async def wallet(update: Update, context):
     user_id = update.message.from_user.id
     
     conn = get_db_connection()
@@ -415,7 +420,7 @@ def wallet(update, context):
         ])
         
         if not all_tasks_completed:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❌ Henüz tüm görevleri tamamlamadın!\n\n"
                 "Önce tüm görevleri tamamla sonra cüzdan adresini gönder."
             )
@@ -423,13 +428,13 @@ def wallet(update, context):
             return
     
     if result['bsc_address']:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"⚠️ Zaten bir cüzdan adresi kayıtlı:\n\n"
             f"{result['bsc_address']}\n\n"
             f"Değiştirmek için yeni adres gönder."
         )
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             "💰 Lütfen BSC (Binance Smart Chain) cüzdan adresini gönder:\n\n"
             "Örnek: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
         )
@@ -438,7 +443,7 @@ def wallet(update, context):
     conn.close()
 
 # Mesaj işleme
-def handle_message(update, context):
+async def handle_message(update: Update, context):
     user_id = update.message.from_user.id
     text = update.message.text
     logger.info(f"Mesaj alındı: user_id={user_id}, text={text}")
@@ -455,14 +460,13 @@ def handle_message(update, context):
             """, (text, user_id))
             conn.commit()
             
-            update.message.reply_text(
+            await update.message.reply_text(
                 "✅ Cüzdan adresin başarıyla kaydedildi!\n\n"
-                "Ödüllerin dağıtımı için admin onayı bekleniyor.\n"
-                "Süreci /start komutu ile takip edebilirsin."
+                "Ödüllerin dağıtımı için admin onayı bekleniyor."
             )
             
             try:
-                bot.send_message(
+                await context.bot.send_message(
                     ADMIN_ID,
                     f"🔥 Yeni cüzdan adresi kaydedildi!\n\n"
                     f"👤 Kullanıcı ID: {user_id}\n"
@@ -472,7 +476,7 @@ def handle_message(update, context):
             except Exception as e:
                 logger.error(f"Admin bildirim hatası: {e}")
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❌ Geçersiz BSC cüzdan adresi!\n\n"
                 "Lütfen doğru bir Binance Smart Chain (BSC) adresi gönder.\n"
                 "Örnek: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
@@ -489,14 +493,14 @@ def handle_message(update, context):
             """, (text, user_id))
             conn.commit()
             
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"✅ X kullanıcı adın ({text}) kaydedildi!\n"
                 "+20 Solium kazandın!\n\n"
                 "Not: Adminler tarafından manuel olarak kontrol edilecektir."
             )
             
             try:
-                bot.send_message(
+                await context.bot.send_message(
                     ADMIN_ID,
                     f"🔍 Yeni X kullanıcı kaydı!\n\n"
                     f"👤 Kullanıcı ID: {user_id}\n"
@@ -507,9 +511,9 @@ def handle_message(update, context):
                 logger.error(f"Admin bildirim hatası: {e}")
             
             context.user_data['awaiting_x_username'] = False
-            show_tasks(update, context)
+            await show_tasks(update, context)
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "❌ Geçersiz X kullanıcı adı formatı!\n\n"
                 "Lütfen @ ile başlayan kullanıcı adını gönder.\n"
                 "Örnek: @soliumcoin"
@@ -518,9 +522,9 @@ def handle_message(update, context):
     conn.close()
 
 # Admin komutları
-def export_json(update, context):
+async def export_json(update: Update, context):
     if update.message.from_user.id != ADMIN_ID:
-        update.message.reply_text("❌ Bu komutu sadece admin kullanabilir!")
+        await update.message.reply_text("❌ Bu komutu sadece admin kullanabilir!")
         return
     
     conn = get_db_connection()
@@ -534,19 +538,19 @@ def export_json(update, context):
     
     try:
         with open('users.json', 'rb') as f:
-            update.message.reply_document(
+            await update.message.reply_document(
                 document=f,
                 caption="📊 Tüm kullanıcı verileri"
             )
     except Exception as e:
-        update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
+        await update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
         logger.error(f"Export JSON hatası: {e}")
     
     conn.close()
 
-def export_addresses(update, context):
+async def export_addresses(update: Update, context):
     if update.message.from_user.id != ADMIN_ID:
-        update.message.reply_text("❌ Bu komutu sadece admin kullanabilir!")
+        await update.message.reply_text("❌ Bu komutu sadece admin kullanabilir!")
         return
     
     conn = get_db_connection()
@@ -560,26 +564,26 @@ def export_addresses(update, context):
     
     try:
         with open('addresses.json', 'rb') as f:
-            update.message.reply_document(
+            await update.message.reply_document(
                 document=f,
                 caption="📊 Cüzdan adresleri"
             )
     except Exception as e:
-        update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
+        await update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
         logger.error(f"Export addresses hatası: {e}")
     
     conn.close()
 
 # Webhook endpoint
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         logger.info("Webhook isteği alındı")
         json_data = request.get_json()
         logger.info(f"Gelen veri: {json_data}")
-        update = Update.de_json(json_data, bot)
+        update = Update.de_json(json_data, app.bot)
         if update:
-            dispatcher.process_update(update)
+            app.loop.run_until_complete(app.process_update(update))
             logger.info("Update başarıyla işlendi")
         else:
             logger.error("Update oluşturulamadı")
@@ -591,38 +595,39 @@ def webhook():
 # Kök endpoint
 @app.route('/')
 def index():
-    webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
+    webhook_url = f"https://{APP_NAME}.herokuapp.com/webhook"
     try:
-        bot.set_webhook(url=webhook_url)
+        app.loop.run_until_complete(app.bot.set_webhook(url=webhook_url))
         logger.info(f"Webhook ayarlandı: {webhook_url}")
         return f"""
         <h1>🤖 Solium Airdrop Bot</h1>
         <p>Webhook URL: <code>{webhook_url}</code></p>
         <p>Durum: <strong>AKTİF</strong></p>
-        <p>Botu kullanmak için Telegram'da <a href="https://t.me/{bot.username}" target="_blank">@{bot.username}</a> adresini ziyaret et</p>
+        <p>Botu kullanmak için Telegram'da <a href="https://t.me/@soliumcoinairdrop_bot">@soliumcoinairdrop_bot</a> adresini ziyaret et</p>
         """
     except Exception as e:
         logger.error(f"Webhook ayarlama hatası: {e}")
         return f"Webhook ayarlama başarısız: {e}", 500
 
-# Handler'ları başlat
-def setup_handlers():
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(CommandHandler('wallet', wallet))
-    dispatcher.add_handler(CommandHandler('check', check_tasks))
-    dispatcher.add_handler(CommandHandler('export', export_json))
-    dispatcher.add_handler(CommandHandler('export2', export_addresses))
-    
-    dispatcher.add_handler(CallbackQueryHandler(button_callback, pattern='^(balance|referral|terms|airdrop)$'))
-    dispatcher.add_handler(CallbackQueryHandler(handle_task, pattern='^(task1|task2|task3|task4|task5)$'))
-    dispatcher.add_handler(CallbackQueryHandler(check_tasks, pattern='^check_tasks$'))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
 # Uygulamayı başlat
 if __name__ == '__main__':
     logger.info("Uygulama başlatılıyor")
     init_db()
-    setup_handlers()
+    
+    # Application oluştur
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Handler'ları ekle
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('wallet', wallet))
+    app.add_handler(CommandHandler('check', check_tasks))
+    app.add_handler(CommandHandler('export', export_json))
+    app.add_handler(CommandHandler('export2', export_addresses))
+    
+    app.add_handler(CallbackQueryHandler(button_callback, pattern='^(balance|referral|terms|airdrop)$'))
+    app.add_handler(CallbackQueryHandler(handle_task, pattern='^(task1|task2|task3|task4|task5)$'))
+    app.add_handler(CallbackQueryHandler(check_tasks, pattern='^check_tasks$'))
+    app.add_handler(MessageHandler(filters.Text() & ~filters.COMMAND, handle_message))
     
     port = int(os.environ.get('PORT', 8443))
     app.run(host='0.0.0.0', port=port, debug=False)
