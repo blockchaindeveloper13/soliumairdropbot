@@ -68,7 +68,6 @@ def start(update, context):
                     (user_id, balance, referrals, participated, referrer_id) 
                     VALUES (?, 0, 0, 0, ?)
                 """, (user_id, referrer_id))
-                # Referans verenin referans sayısını artır
                 c.execute("""
                     UPDATE users SET referrals = referrals + 1 
                     WHERE user_id = ?
@@ -119,6 +118,7 @@ def button_callback(update, context):
     query = update.callback_query
     user_id = query.from_user.id
     query.answer()
+    logger.info(f"Buton tıklandı: user_id={user_id}, data={query.data}")
 
     conn = get_db_connection()
     c = conn.cursor()
@@ -214,7 +214,6 @@ def show_tasks(update, context):
         [InlineKeyboardButton("🔍 Görevleri Kontrol Et", callback_data='check_tasks')]
     ]
     
-    # None olan butonları filtrele
     keyboard = [row for row in keyboard if row[0] is not None]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -255,14 +254,12 @@ def check_tasks(update, context):
     ])
     
     if all_tasks_completed:
-        # Referans bonusu ekle
         c.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
         referrer_id = c.fetchone()['referrer_id'] if c.fetchone() else None
         
         if referrer_id:
             c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (referrer_id,))
         
-        # Kullanıcıya ödül ekle
         c.execute("""
             UPDATE users 
             SET balance = balance + 100, participated = 1 
@@ -289,6 +286,7 @@ def handle_task(update, context):
     query = update.callback_query
     user_id = query.from_user.id
     query.answer()
+    logger.info(f"Görev işleniyor: user_id={user_id}, task={query.data}")
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -443,6 +441,7 @@ def wallet(update, context):
 def handle_message(update, context):
     user_id = update.message.from_user.id
     text = update.message.text
+    logger.info(f"Mesaj alındı: user_id={user_id}, text={text}")
     
     conn = get_db_connection()
     c = conn.cursor()
@@ -462,7 +461,6 @@ def handle_message(update, context):
                 "Süreci /start komutu ile takip edebilirsin."
             )
             
-            # Admin'e bildirim gönder
             try:
                 bot.send_message(
                     ADMIN_ID,
@@ -497,7 +495,6 @@ def handle_message(update, context):
                 "Not: Adminler tarafından manuel olarak kontrol edilecektir."
             )
             
-            # Admin'e bildirim gönder
             try:
                 bot.send_message(
                     ADMIN_ID,
@@ -543,6 +540,7 @@ def export_json(update, context):
             )
     except Exception as e:
         update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
+        logger.error(f"Export JSON hatası: {e}")
     
     conn.close()
 
@@ -568,37 +566,44 @@ def export_addresses(update, context):
             )
     except Exception as e:
         update.message.reply_text(f"❌ Dosya gönderilirken hata: {e}")
+        logger.error(f"Export addresses hatası: {e}")
     
     conn.close()
 
-# Webhook endpointini bu şekilde güncelle
 # Webhook endpoint
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
-    json_data = request.get_json()
-    print("Gelen veri:", json_data)  # Log ekle
-    update = Update.de_json(json_data, bot)
-    dispatcher.process_update(update)
-    return 'ok', 200
-
-# Tek bir root endpoint olacak şekilde düzenle
-@app.route('/')
-def index():
-    webhook_url = f"https://soliumairdropbot-ef7a2a4b1280-0071788c2efa.herokuapp.com/{BOT_TOKEN}"
-    webhook_info_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-    
-    return f"""
-    <h1>🤖 Solium Airdrop Bot</h1>
-    <p>Webhook URL: <code>{webhook_url}</code></p>
-    <p>Durum: <strong>AKTİF</strong></p>
-    <a href="{webhook_info_url}" target="_blank">Webhook Bilgilerini Kontrol Et</a>
-    <p>Botu kullanmak için Telegram'da <a href="https://t.me/{bot.username}" target="_blank">@{bot.username}</a> adresini ziyaret et</p>
-    """
+    try:
+        logger.info("Webhook isteği alındı")
+        json_data = request.get_json()
+        logger.info(f"Gelen veri: {json_data}")
+        update = Update.de_json(json_data, bot)
+        if update:
+            dispatcher.process_update(update)
+            logger.info("Update başarıyla işlendi")
+        else:
+            logger.error("Update oluşturulamadı")
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Webhook hatası: {e}")
+        return 'Error', 500
 
 # Kök endpoint
 @app.route('/')
 def index():
-    return "🤖 Solium Airdrop Botu Aktif! /setwebhook ile webhook'u ayarlayın."
+    webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
+    try:
+        bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook ayarlandı: {webhook_url}")
+        return f"""
+        <h1>🤖 Solium Airdrop Bot</h1>
+        <p>Webhook URL: <code>{webhook_url}</code></p>
+        <p>Durum: <strong>AKTİF</strong></p>
+        <p>Botu kullanmak için Telegram'da <a href="https://t.me/{bot.username}" target="_blank">@{bot.username}</a> adresini ziyaret et</p>
+        """
+    except Exception as e:
+        logger.error(f"Webhook ayarlama hatası: {e}")
+        return f"Webhook ayarlama başarısız: {e}", 500
 
 # Handler'ları başlat
 def setup_handlers():
@@ -615,18 +620,9 @@ def setup_handlers():
 
 # Uygulamayı başlat
 if __name__ == '__main__':
-    # Veritabanını başlat
+    logger.info("Uygulama başlatılıyor")
     init_db()
-    
-    # Handler'ları ayarla
     setup_handlers()
     
-    # Webhook'u ayarla (sadece production'da)
-    if APP_NAME:
-        webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
-        bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-    
-    # Flask uygulamasını başlat
     port = int(os.environ.get('PORT', 8443))
     app.run(host='0.0.0.0', port=port, debug=False)
