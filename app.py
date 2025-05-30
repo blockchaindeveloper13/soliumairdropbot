@@ -186,12 +186,19 @@ async def buton_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def webhook_handler(request):
     try:
+        # Webhook verisini al
         data = await request.json()
+        
+        # Update nesnesini oluştur
         update = Update.de_json(data, request.app['telegram_app'].bot)
+        
+        # Update'i işle
         await request.app['telegram_app'].process_update(update)
+        
+        # Başarılı yanıt dön
         return web.Response(text="OK")
     except Exception as e:
-        logger.error(f"Webhook hatası: {e}")
+        logger.error(f"Webhook hatası: {e}", exc_info=True)
         return web.Response(status=500, text="Sunucu hatası")
 
 async def ana_sayfa(request):
@@ -215,12 +222,12 @@ def main():
     web_app = web.Application()
     web_app['telegram_app'] = telegram_app
     
-    # Webhook endpointini ayarla (BOT_TOKEN ile)
-    web_app.router.add_post(f'/{BOT_TOKEN}', webhook_handler)
+    # Webhook endpointini ayarla
+    web_app.router.add_post('/webhook', webhook_handler)
     web_app.router.add_get('/', ana_sayfa)
     
     port = int(os.environ.get("PORT", 8443))
-    webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
+    webhook_url = f"https://{APP_NAME}.herokuapp.com/webhook"
     
     async def baslangic(app):
         await telegram_app.initialize()
