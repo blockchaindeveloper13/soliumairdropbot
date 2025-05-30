@@ -1,21 +1,24 @@
 import os
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
 from aiohttp import web
 
+# Log ayarları
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# Config
+BOT_TOKEN = os.environ['BOT_TOKEN']
+DATABASE_URL = os.environ['DATABASE_URL']
 BOT_USERNAME = os.environ['BOT_USERNAME']
+APP_NAME = os.environ['APP_NAME']
 
 # Veritabanı bağlantı havuzu
 db_pool = None
@@ -32,9 +35,9 @@ def init_db_pool():
             host=url.hostname,
             port=url.port
         )
-        logger.info("Database connection pool initialized")
+        logger.info("Veritabanı bağlantı havuzu oluşturuldu")
     except Exception as e:
-        logger.error(f"Database pool initialization error: {e}")
+        logger.error(f"Veritabanı havuz hatası: {e}")
         raise
 
 def init_db():
@@ -51,184 +54,182 @@ def init_db():
             )
         ''')
         conn.commit()
-        cursor.close()
-        db_pool.putconn(conn)
-        logger.info("Database initialized successfully")
+        logger.info("Veritabanı tablosu oluşturuldu")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.error(f"Veritabanı başlatma hatası: {e}")
         raise
-
-async def start(update, context):
-    user_id = update.effective_user.id
-    username = update.effective_user.username or f"User_{user_id}"
-    referral_id = context.args[0] if context.args else None
-    try:
-        conn = db_pool.getconn()
-        cursor = conn.cursor()
-        cursor.execute(
-            'INSERT INTO users (user_id, balance, username) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO NOTHING',
-            (user_id, 0, username)
-        )
-        if referral_id:
-            try:
-                referral_id = int(referral_id)
-                cursor.execute('SELECT user_id FROM users WHERE user_id = %s', (referral_id,))
-                if cursor.fetchone():
-                    cursor.execute('UPDATE users SET balance = balance + 20 WHERE user_id = %s', (referral_id,))
-                    cursor.execute('UPDATE users SET referrer_id = %s WHERE user_id = %s', (referral_id, user_id))
-                    logger.info(f"User {user_id} ({username}) joined via referral {referral_id}")
-                else:
-                    logger.warning(f"Referral ID {referral_id} not found")
-            except ValueError:
-                logger.error(f"Invalid referral ID: {referral_id}")
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Database error in start: {e}")
     finally:
         if 'cursor' in locals():
             cursor.close()
         if 'conn' in locals():
             db_pool.putconn(conn)
-    keyboard = [
-        [InlineKeyboardButton("💰 Balance", callback_data='balance')],
-        [InlineKeyboardButton("🤝 Referral", callback_data='referral')],
-        [InlineKeyboardButton("📋 Rules", callback_data='rules')],
-        [InlineKeyboardButton("🎁 Claim", callback_data='claim')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(f"🚀 Welcome to Solium Airdrop Bot, {username}!", reply_markup=reply_markup)
 
-async def balance(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    username = user.username or f"User_{user_id}"
+    referans_id = context.args[0] if context.args else None
+    
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        # Kullanıcıyı veritabanına ekle
+        cursor.execute(
+            'INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING',
+            (user_id, username)
+        )
+        
+        # Referans kontrolü
+        if referans_id:
+            try:
+                referans_id = int(referans_id)
+                cursor.execute('SELECT user_id FROM users WHERE user_id = %s', (referans_id,))
+                if cursor.fetchone():
+                    cursor.execute('UPDATE users SET balance = balance + 20 WHERE user_id = %s', (referans_id,))
+                    cursor.execute('UPDATE users SET referrer_id = %s WHERE user_id = %s', (referans_id, user_id))
+                    logger.info(f"{user_id} ID'li kullanıcı {referans_id} referansıyla kaydoldu")
+            except ValueError:
+                logger.error(f"Geçersiz referans ID: {referans_id}")
+        
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Başlangıç hatası: {e}")
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            db_pool.putconn(conn)
+    
+    # Menüyü göster
+    klavye = [
+        [InlineKeyboardButton("💰 Bakiye", callback_data='balance')],
+        [InlineKeyboardButton("🤝 Referans", callback_data='referral')],
+        [InlineKeyboardButton("📋 Kurallar", callback_data='rules')],
+        [InlineKeyboardButton("🎁 Talep Et", callback_data='claim')]
+    ]
+    await update.message.reply_text(
+        f"Merhaba {user.first_name}! 🚀\n\nSolium Airdrop Botuna hoş geldin!",
+        reply_markup=InlineKeyboardMarkup(klavye)
+    )
+
+async def bakiye(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
         cursor.execute('SELECT balance FROM users WHERE user_id = %s', (user_id,))
-        result = cursor.fetchone()
-        balance = result[0] if result else 0
-        cursor.close()
-        db_pool.putconn(conn)
-        await update.message.reply_text(f"💰 Your balance: {balance} SOLIUM")
+        bakiye = cursor.fetchone()[0] or 0
+        await update.message.reply_text(f"💰 Bakiyeniz: {bakiye} SOLIUM")
     except Exception as e:
-        logger.error(f"Database error in balance: {e}")
-        await update.message.reply_text("❌ Error fetching balance.")
+        logger.error(f"Bakiye hatası: {e}")
+        await update.message.reply_text("❌ Bakiye bilgisi alınamadı")
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            db_pool.putconn(conn)
 
-async def referral(update, context):
+async def referans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    referral_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
+    referans_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
+    
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
         cursor.execute('SELECT COUNT(*) FROM users WHERE referrer_id = %s', (user_id,))
-        referral_count = cursor.fetchone()[0]
-        cursor.close()
-        db_pool.putconn(conn)
+        referans_sayisi = cursor.fetchone()[0]
         await update.message.reply_text(
-            f"📢 Your referral link: {referral_link}\n"
-            f"Invite friends to earn 20 SOLIUM per referral!\n"
-            f"You have {referral_count} referrals."
+            f"📢 Referans Linkiniz: {referans_link}\n"
+            f"Davet ettiğiniz her kişi için 20 SOLIUM kazanırsınız!\n"
+            f"Toplam referans sayınız: {referans_sayisi}"
         )
     except Exception as e:
-        logger.error(f"Database error in referral: {e}")
+        logger.error(f"Referans hatası: {e}")
         await update.message.reply_text(
-            f"📢 Your referral link: {referral_link}\n"
-            f"Invite friends to earn 20 SOLIUM per referral!"
+            f"📢 Referans Linkiniz: {referans_link}\n"
+            f"Davet ettiğiniz her kişi için 20 SOLIUM kazanırsınız!"
         )
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals():
+            db_pool.putconn(conn)
 
-async def callback_query(update, context):
-    query = update.callback_query
-    await query.answer()
-    if query.data == 'balance':
-        await balance(update, context)
-    elif query.data == 'referral':
-        await referral(update, context)
-    elif query.data == 'rules':
-        rules = (
-            "📋 Airdrop Rules:\n\n"
-            "1. Join our Telegram group: [your_group_link]\n"
-            "2. Follow our Telegram channel: [your_channel_link]\n"
-            "3. Follow us on X: [your_x_link]\n"
-            "4. Retweet pinned post\n"
-            "5. Join WhatsApp channel: [your_whatsapp_link]\n\n"
-            "💎 Bonus: 20 SOLIUM per referral!"
-        )
-        await query.message.reply_text(rules)
-    elif query.data == 'claim':
-        await query.message.reply_text("🎯 Claim tasks coming soon! Check rules for tasks.")
+async def kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kurallar_metni = (
+        "📋 Airdrop Kuralları:\n\n"
+        "1. Telegram grubumuza katılın\n"
+        "2. Telegram kanalımızı takip edin\n"
+        "3. X hesabımızı takip edin\n"
+        "4. Sabitlenmiş postu retweetleyin\n"
+        "5. WhatsApp kanalına katılın\n\n"
+        "💎 Bonus: Her referans için 20 SOLIUM kazanın!"
+    )
+    await update.message.reply_text(kurallar_metni)
 
-async def handle_webhook(request):
-    logger.debug(f"Webhook request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
-    app = request.app['telegram_app']
+async def talep(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🎯 Talep işlemleri yakında aktif olacak!")
+
+async def buton_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sorgu = update.callback_query
+    await sorgu.answer()
+    
+    if sorgu.data == 'balance':
+        await bakiye(update, context)
+    elif sorgu.data == 'referral':
+        await referans(update, context)
+    elif sorgu.data == 'rules':
+        await kurallar(update, context)
+    elif sorgu.data == 'claim':
+        await talep(update, context)
+
+async def webhook_handler(request):
     try:
-        if request.method == 'POST':
-            data = await request.json()
-            logger.debug(f"Webhook data: {data}")
-            update = Update.de_json(data, app.bot)
-            if update:
-                logger.info(f"Processing update: {update}")
-                await app.process_update(update)
-            else:
-                logger.warning("No valid update found in webhook data")
-            return web.Response(status=200)
-        else:
-            logger.warning(f"Invalid method for {request.path}: {request.method}")
-            return web.Response(status=405)
+        data = await request.json()
+        update = Update.de_json(data, request.app['telegram_app'].bot)
+        await request.app['telegram_app'].process_update(update)
+        return web.Response(text="OK")
     except Exception as e:
-        logger.error(f"Webhook error: {e}", exc_info=True)
-        return web.Response(status=500)
+        logger.error(f"Webhook hatası: {e}")
+        return web.Response(status=500, text="Sunucu hatası")
 
-async def index(request):
-    logger.debug(f"Index request: method={request.method}, path={request.path}, headers={request.headers}")
-    return web.Response(text="🤖 Solium Airdrop Bot is running!")
-
-async def catch_all(request):
-    logger.debug(f"Catch-all request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
-    try:
-        if request.method == 'POST':
-            data = await request.json()
-            logger.debug(f"Catch-all data: {data}")
-        else:
-            logger.debug("No JSON data in catch-all")
-    except Exception as e:
-        logger.error(f"Catch-all error: {e}")
-    return web.Response(status=404, text=f"Route not found: {request.path}")
+async def ana_sayfa(request):
+    return web.Response(text="🤖 Solium Airdrop Botu Aktif!")
 
 def main():
-    logger.info("Starting bot")
+    logger.info("Bot başlatılıyor...")
     init_db_pool()
     init_db()
     
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Telegram uygulamasını oluştur
+    telegram_app = Application.builder().token(BOT_TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("referral", referral))
-    app.add_handler(CallbackQueryHandler(callback_query))
+    # Handler'ları ekle
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("bakiye", bakiye))
+    telegram_app.add_handler(CommandHandler("referans", referans))
+    telegram_app.add_handler(CallbackQueryHandler(buton_handler))
     
+    # aiohttp uygulamasını oluştur
     web_app = web.Application()
-    web_app['telegram_app'] = app
-    web_app.router.add_post('/webhook', handle_webhook)
-    web_app.router.add_get('/', index)
-    web_app.router.add_route('*', '/{path:.*}', catch_all)  # Tüm rotaları yakala
+    web_app['telegram_app'] = telegram_app
+    
+    # Webhook endpointini ayarla (BOT_TOKEN ile)
+    web_app.router.add_post(f'/{BOT_TOKEN}', webhook_handler)
+    web_app.router.add_get('/', ana_sayfa)
     
     port = int(os.environ.get("PORT", 8443))
-    webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
+    webhook_url = f"https://{APP_NAME}.herokuapp.com/{BOT_TOKEN}"
     
-    async def on_startup(app):
-        await app['telegram_app'].initialize()
-        try:
-            await app['telegram_app'].bot.set_webhook(webhook_url)
-            logger.info(f"Webhook set to {webhook_url}")
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {e}")
+    async def baslangic(app):
+        await telegram_app.initialize()
+        await telegram_app.bot.set_webhook(webhook_url)
+        logger.info(f"Webhook başarıyla ayarlandı: {webhook_url}")
     
-    async def on_shutdown(app):
-        await app['telegram_app'].shutdown()
-        logger.info("Application shutdown")
+    web_app.on_startup.append(baslangic)
     
-    web_app.on_startup.append(on_startup)
-    web_app.on_shutdown.append(on_shutdown)
-    
-    logger.info(f"Starting web server on port {port}")
+    logger.info(f"Sunucu {port} portunda başlatılıyor...")
     web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
