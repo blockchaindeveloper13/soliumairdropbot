@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Defaults
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
