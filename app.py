@@ -5,26 +5,26 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import sqlite3
 import re
 
-# Log ayarları
+# Logging setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Ortam değişkenleri
+# Environment variables
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_ID = int(os.environ.get('ADMIN_ID'))
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@soliumcoin')
 GROUP_ID = os.environ.get('GROUP_ID', '@soliumcoinchat')
 
-# Veritabanı bağlantısı
+# Database connection
 def get_db_connection():
     conn = sqlite3.connect('users.db', check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
-# Veritabanı tablosunu oluştur
+# Initialize database
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
@@ -47,12 +47,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Kullanıcıyı veritabanına ekle veya güncelle
+    # Check if user already participated
     c.execute("SELECT participated FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
     
     if user and user['participated']:
-        await update.message.reply_text("🎉 Zaten airdropa katıldınız! Tekrar katılamazsınız.")
+        await update.message.reply_text("🎉 You've already participated in the airdrop! You can't join again.")
         conn.close()
         return
     
@@ -60,11 +60,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             referrer_id = int(args[0][3:])
             if referrer_id != user_id:
-                # Referans verenin referans sayısını artır
-                c.execute("UPDATE users SET referrals = referrals + 1 WHERE user_id = ?", (referrer_id,))
-                c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (referrer_id,))
+                # Update referrer's count and balance
+                c.execute("UPDATE users SET referrals = referrals + 1, balance = balance + 20 WHERE user_id = ?", (referrer_id,))
                 
-                # Yeni kullanıcıya referans bonusu ekle
+                # Add new user with referral bonus
                 c.execute("""
                     INSERT OR REPLACE INTO users 
                     (user_id, balance, referrer_id) 
@@ -72,8 +71,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 """, (user_id, referrer_id))
                 
                 await update.message.reply_text(
-                    "🎉 Referans bağlantısıyla giriş yaptınız! "
-                    "Hem size hem de referans verene 20 Solium eklendi."
+                    "🎉 You joined through a referral link! "
+                    "Both you and the referrer received 20 Solium."
                 )
             else:
                 c.execute("""
@@ -96,36 +95,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn.commit()
     conn.close()
-    await show_task(update, context, 1)  # İlk görevi göster
+    await show_task(update, context, 1)  # Show first task
 
 async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_number: int):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     
     tasks = [
         {
-            'title': "1️⃣ Telegram Grubuna Katıl",
-            'description': f"Resmi Telegram grubumuza katılın: {GROUP_ID}",
-            'button': "Katıldım ✅"
+            'title': "1️⃣ Join Telegram Group",
+            'description': f"Join our official Telegram group: {GROUP_ID}",
+            'button': "I Joined ✅"
         },
         {
-            'title': "2️⃣ Telegram Kanalını Takip Et",
-            'description': f"Resmi Telegram kanalımızı takip edin: {CHANNEL_ID}",
-            'button': "Takip Ediyorum ✅"
+            'title': "2️⃣ Follow Telegram Channel",
+            'description': f"Follow our official Telegram channel: {CHANNEL_ID}",
+            'button': "I'm Following ✅"
         },
         {
-            'title': "3️⃣ X (Twitter) Hesabını Takip Et",
-            'description': "Resmi X hesabımızı takip edin: @soliumcoin",
-            'button': "Takip Ediyorum ✅"
+            'title': "3️⃣ Follow X (Twitter) Account",
+            'description': "Follow our official X account: @soliumcoin",
+            'button': "I'm Following ✅"
         },
         {
-            'title': "4️⃣ Sabitlenmiş Postu Retweet Yap",
-            'description': "X'teki sabitlenmiş postumuzu retweet yapın",
-            'button': "Retweet Yaptım ✅"
+            'title': "4️⃣ Retweet Pinned Post",
+            'description': "Retweet our pinned post on X",
+            'button': "I Retweeted ✅"
         },
         {
-            'title': "5️⃣ BSC Cüzdan Adresinizi Girin",
-            'description': "Ödüllerin gönderileceği BSC cüzdan adresinizi girin",
-            'button': "Adresimi Giriyorum"
+            'title': "5️⃣ Enter Your BSC Wallet Address",
+            'description': "Enter your BSC wallet address to receive rewards",
+            'button': "Enter My Address"
         }
     ]
     
@@ -135,18 +134,22 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
         keyboard = [[InlineKeyboardButton(task['button'], callback_data=f'task_done_{task_number}')]]
         
         if task_number > 1:
-            keyboard.append([InlineKeyboardButton("◀️ Önceki Görev", callback_data=f'task_{task_number-1}')])
+            keyboard.append([InlineKeyboardButton("◀️ Previous Task", callback_data=f'task_{task_number-1}')])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        text = f"🎯 Görev {task_number}/{len(tasks)}\n\n{task['title']}\n\n{task['description']}"
+        text = f"🎯 Task {task_number}/{len(tasks)}\n\n{task['title']}\n\n{task['description']}"
         
         if update.message:
             await update.message.reply_text(text, reply_markup=reply_markup)
         else:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+            try:
+                await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
+                await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
     else:
-        # Tüm görevler tamamlandı
+        # All tasks completed
         await complete_airdrop(update, context)
 
 async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -155,29 +158,32 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Bakiyeyi güncelle (100 Solium ödül)
+    # Update balance (100 Solium reward)
     c.execute("UPDATE users SET balance = balance + 100, participated = 1 WHERE user_id = ?", (user_id,))
     
-    # Referans varsa bonus ekle
+    # Add referral bonus if applicable
     c.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,))
     referrer = c.fetchone()
     if referrer and referrer['referrer_id']:
         c.execute("UPDATE users SET balance = balance + 20 WHERE user_id = ?", (referrer['referrer_id'],))
-        await context.bot.send_message(
-            referrer['referrer_id'],
-            "🎉 Bir referansınız airdropu tamamladı! +20 Solium kazandınız."
-        )
+        try:
+            await context.bot.send_message(
+                referrer['referrer_id'],
+                "🎉 Your referral completed the airdrop! You earned +20 Solium."
+            )
+        except Exception as e:
+            logger.error(f"Error sending referral notification: {e}")
     
     conn.commit()
     
-    # Kullanıcıya bilgi ver
+    # Show final message to user
     c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     balance = c.fetchone()['balance']
     
     await (update.message or update.callback_query.message).reply_text(
-        f"🎉 TEBRİKLER! Airdropu başarıyla tamamladınız!\n\n"
-        f"💵 Toplam Kazanç: {balance} Solium\n\n"
-        f"Ödüller dağıtım sırasında kayıtlı cüzdan adresinize gönderilecektir."
+        f"🎉 CONGRATULATIONS! You've successfully completed the airdrop!\n\n"
+        f"💵 Total Earned: {balance} Solium\n\n"
+        f"Rewards will be sent to your registered BSC wallet address."
     )
     
     conn.close()
@@ -192,44 +198,44 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Kullanıcının durumunu kontrol et
+    # Check user status
     c.execute("SELECT participated FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
     
     if user and user['participated']:
-        await query.message.reply_text("❌ Zaten airdropa katıldınız! Tekrar katılamazsınız.")
+        await query.message.reply_text("❌ You've already participated in the airdrop!")
         conn.close()
         return
     
     if data.startswith('task_'):
-        # Görev değiştirme butonu
+        # Task navigation button
         task_number = int(data.split('_')[1])
         await show_task(update, context, task_number)
     
     elif data.startswith('task_done_'):
-        # Görev tamamlama butonu
+        # Task completion button
         task_number = int(data.split('_')[2])
         
-        if task_number == 5:  # Cüzdan adresi isteme
+        if task_number == 5:  # Wallet address request
             await query.message.reply_text(
-                "💰 Lütfen BSC (Binance Smart Chain) cüzdan adresinizi gönderin:\n\n"
-                "Örnek: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
-                "⚠️ Dikkat: Yanlış adres girerseniz ödüllerinizi alamazsınız!"
+                "💰 Please send your BSC (Binance Smart Chain) wallet address:\n\n"
+                "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
+                "⚠️ Warning: Wrong address = no rewards!"
             )
             context.user_data['awaiting_wallet'] = True
         else:
-            # Diğer görevler için onay mesajı
+            # For other tasks, show confirmation
             await query.message.reply_text(
-                "✅ Görev tamamlandı! Adminler tarafından kontrol edilecektir.\n\n"
-                "Bir sonraki göreve geçebilirsiniz."
+                "✅ Task completed! It will be verified by our team.\n\n"
+                "You can proceed to the next task."
             )
         
-        # Bir sonraki göreve geç
+        # Move to next task
         next_task = task_number + 1
         c.execute("UPDATE users SET current_task = ? WHERE user_id = ?", (next_task, user_id))
         conn.commit()
         
-        if task_number != 5:  # Cüzdan adresi istemiyorsak sonraki göster
+        if task_number != 5:  # Don't show next task for wallet address
             await show_task(update, context, next_task)
     
     conn.close()
@@ -245,17 +251,17 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
         conn = get_db_connection()
         c = conn.cursor()
         
-        # Cüzdan adresini kaydet
+        # Save wallet address
         c.execute("UPDATE users SET bsc_address = ? WHERE user_id = ?", (text, user_id))
         conn.commit()
         
-        # Son görevi tamamla ve airdropu bitir
+        # Complete the final task
         c.execute("UPDATE users SET current_task = 6 WHERE user_id = ?", (user_id,))
         conn.commit()
         
         await update.message.reply_text(
-            "✅ Cüzdan adresiniz başarıyla kaydedildi!\n\n"
-            "Şimdi airdropu tamamlamak için son adıma geçiyoruz..."
+            "✅ Your wallet address has been saved!\n\n"
+            "Now completing the airdrop process..."
         )
         
         await complete_airdrop(update, context)
@@ -263,14 +269,14 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
         conn.close()
     else:
         await update.message.reply_text(
-            "❌ Geçersiz BSC cüzdan adresi formatı!\n\n"
-            "Lütfen şu formatta bir adres girin:\n"
+            "❌ Invalid BSC wallet address format!\n\n"
+            "Please enter an address in this format:\n"
             "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
         )
 
 async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Bu komutu sadece admin kullanabilir!")
+        await update.message.reply_text("❌ Only admins can use this command!")
         return
     
     conn = get_db_connection()
@@ -280,27 +286,27 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     addresses = [dict(row) for row in c.fetchall()]
     
     if not addresses:
-        await update.message.reply_text("❌ Kayıtlı cüzdan adresi bulunamadı!")
+        await update.message.reply_text("❌ No wallet addresses found in database!")
         conn.close()
         return
     
-    # Geçici dosya oluştur
+    # Create temporary file
     filename = "bsc_addresses.txt"
     with open(filename, 'w') as f:
         for addr in addresses:
             f.write(f"{addr['user_id']}: {addr['bsc_address']}\n")
     
-    # Dosyayı gönder
+    # Send file
     try:
         with open(filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
-                caption=f"📋 Toplam {len(addresses)} adet BSC cüzdan adresi"
+                caption=f"📋 Total {len(addresses)} BSC wallet addresses"
             )
     except Exception as e:
-        await update.message.reply_text(f"❌ Dosya gönderilirken hata: {str(e)}")
+        await update.message.reply_text(f"❌ Error sending file: {str(e)}")
     finally:
-        # Geçici dosyayı sil
+        # Remove temporary file
         try:
             os.remove(filename)
         except:
@@ -309,20 +315,20 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 def main():
-    # Veritabanını başlat
+    # Initialize database
     init_db()
     
-    # Uygulamayı oluştur
+    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Handler'ları ekle
+    # Add handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('export', export_addresses))
     application.add_handler(CallbackQueryHandler(handle_task_button, pattern='^(task_|task_done_)'))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_address))
     
-    # Polling modunda başlat
-    logger.info("🚀 Bot polling modunda başlatılıyor...")
+    # Start polling
+    logger.info("🚀 Starting bot in polling mode...")
     application.run_polling(
         drop_pending_updates=True,
         allowed_updates=['message', 'callback_query']
