@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Queue
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
@@ -163,7 +163,7 @@ def main():
     logger.info("Starting bot")
     init_db_pool()
     init_db()
-    app = Application.builder().token(BOT_TOKEN).connection_pool_size(20).defaults(Defaults(timeout=20)).concurrent_updates(Queue()).build()
+    app = Application.builder().token(BOT_TOKEN).connection_pool_size(20).defaults(Defaults(timeout=20)).concurrent_updates(True).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CallbackQueryHandler(callback_query))
