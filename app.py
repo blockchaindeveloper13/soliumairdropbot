@@ -190,17 +190,35 @@ async def webhook_handler(request):
         data = await request.json()
         logger.debug(f"📩 Gelen veri: {data}")
         
-        update = Update.de_json(data, request.app['telegram_app'].bot)
-        await request.app['telegram_app'].process_update(update)
+        # Telegram uygulamasını al
+        telegram_app = request.app['telegram_app']
+        
+        # Update'i işle
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
         
         logger.info("✅ İstek başarıyla işlendi")
-        return web.Response(text="OK")
+        return web.Response(text="OK", status=200)
     except Exception as e:
         logger.error(f"🔥 Webhook hatası: {e}", exc_info=True)
-        return web.Response(status=500, text="Sunucu hatası")
+        return web.Response(status=500, text=f"Sunucu hatası: {str(e)}")
 
 async def ana_sayfa(request):
     return web.Response(text="🤖 Solium Airdrop Botu Aktif!")
+
+async def on_startup(app):
+    try:
+        # Webhook'u ayarla
+        webhook_url = f"https://{APP_NAME}.herokuapp.com/webhook"
+        await app['telegram_app'].bot.set_webhook(webhook_url)
+        logger.info(f"🌐 Webhook başarıyla ayarlandı: {webhook_url}")
+    except Exception as e:
+        logger.error(f"🔥 Webhook ayarlama hatası: {e}")
+
+async def on_shutdown(app):
+    logger.info("🛑 Uygulama kapatılıyor...")
+    db_pool.closeall()
+    logger.info("🔒 Veritabanı bağlantıları kapatıldı")
 
 def main():
     logger.info("🚀 Bot başlatılıyor...")
@@ -224,23 +242,12 @@ def main():
     web_app.router.add_post('/webhook', webhook_handler)
     web_app.router.add_get('/', ana_sayfa)
     
+    # Başlangıç ve kapanış işlemleri
+    web_app.on_startup.append(on_startup)
+    web_app.on_shutdown.append(on_shutdown)
+    
+    # Port ayarı (Heroku otomatik atar)
     port = int(os.environ.get("PORT", 8443))
-    webhook_url = f"https://{APP_NAME}.herokuapp.com/webhook"
-    
-    async def baslangic(app):
-        await telegram_app.initialize()
-        await telegram_app.bot.set_webhook(webhook_url)
-        logger.info(f"🌐 Webhook başarıyla ayarlandı: {webhook_url}")
-    
-    web_app.on_startup.append(baslangic)
-    
-    # Hata yönetimi
-    async def hata_yonetimi(app):
-        logger.info("🛑 Uygulama kapatılıyor...")
-        db_pool.closeall()
-        logger.info("🔒 Veritabanı bağlantıları kapatıldı")
-    
-    web_app.on_shutdown.append(hata_yonetimi)
     
     logger.info(f"🌍 Sunucu {port} portunda başlatılıyor...")
     web.run_app(web_app, host="0.0.0.0", port=port)
