@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from urllib.parse import urlparse
 import psycopg2
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-BOT_USERNAME = os.environ['BOT_USERNAME']  # Zorunlu ortam değişkeni
+BOT_USERNAME = os.environ['BOT_USERNAME']
 
 # Veritabanı bağlantı havuzu
 db_pool = None
@@ -25,7 +25,7 @@ def init_db_pool():
     try:
         url = urlparse(DATABASE_URL)
         db_pool = psycopg2.pool.SimpleConnectionPool(
-            1, 20,  # Min 1, max 20 bağlantı
+            1, 20,
             database=url.path[1:],
             user=url.username,
             password=url.password,
@@ -51,8 +51,8 @@ def init_db():
             )
         ''')
         conn.commit()
+        conn.close()
         cursor.close()
-        db_pool.putconn(conn)
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
@@ -96,7 +96,7 @@ async def start(update, context):
         [InlineKeyboardButton("🎁 Claim", callback_data='claim')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(f"🚀 Welcome to Solium Airdrop Bot, {username}!", reply_markup=reply_markup)
+    await update.message.reply_text(f"🚖 Welcome to Solium Airdrop Bot, {username}!", reply_markup=reply_markup)
 
 async def balance(update, context):
     user_id = update.effective_user.id
@@ -158,30 +158,60 @@ async def callback_query(update, context):
 
 async def handle_webhook(request):
     app = request.app['telegram_app']
-    update = await request.json()
-    await app.update_queue.put(update)
-    return web.Response()
+    try:
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        if update:
+            await app.process_update(update)
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500)
+
+async def index(request):
+    return web.Response(text="🤖 Solium Airdrop Bot is running!")
 
 def main():
     logger.info("Starting bot")
     init_db_pool()
     init_db()
-    app = Application.builder().token(BOT_TOKEN).connection_pool_size(20).concurrent_updates(True).build()
+    
+    # Telegram bot uygulamasını oluştur
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Handler'ları ekle
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CallbackQueryHandler(callback_query))
     
-    # aiohttp web uygulaması
+    # aiohttp web uygulamasını oluştur
     web_app = web.Application()
     web_app['telegram_app'] = app
     web_app.router.add_post('/webhook', handle_webhook)
+    web_app.router.add_get('/', index)
     
     # Webhook ayarları
     port = int(os.environ.get("PORT", 8443))
     webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
     
+    # Webhook'u ayarla ve uygulamayı başlat
+    async def on_startup(_):
+        await app.initialize()
+        await app.bot.set_webhook(webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
+    
+    async def on_shutdown(_):
+        await app.shutdown()
+        logger.info("Application shutdown")
+    
     # Web uygulamasını başlat
-    web.run_app(web_app, host="0.0.0.0", port=port)
+    web.run_app(
+        web_app,
+        host="0.0.0.0",
+        port=port,
+        startup=on_startup,
+        shutdown=on_shutdown
+    )
 
 if __name__ == "__main__":
     main()
