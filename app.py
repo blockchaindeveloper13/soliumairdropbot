@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
 async def start(update, context):
-    logger.info(f"Sending message to chat_id={update.message.chat_id}")
     keyboard = [
         [InlineKeyboardButton("💰 Balance", callback_data='balance')],
         [InlineKeyboardButton("🤝 Referral", callback_data='referral')],
@@ -25,29 +24,23 @@ async def start(update, context):
 async def callback_query(update, context):
     query = update.callback_query
     await query.answer()
-    chat_id = query.message.chat_id
-    callback_data = query.data
-    logger.info(f"Handling callback: data={callback_data}, chat_id={chat_id}")
-    try:
-        if callback_data == 'balance':
-            await query.message.reply_text("💰 Your balance: 0 SOLIUM")
-        elif callback_data == 'referral':
-            await query.message.reply_text("📢 Your referral link: Coming soon!")
-        elif callback_data == 'rules':
-            rules = (
-                "📋 Airdrop Rules:\n\n"
-                "1. Join our Telegram group\n"
-                "2. Follow our Telegram channel\n"
-                "3. Follow us on X\n"
-                "4. Retweet pinned post\n"
-                "5. Join WhatsApp channel\n\n"
-                "💎 Bonus: 20 SOLIUM per referral!"
-            )
-            await query.message.reply_text(rules)
-        elif callback_data == 'claim':
-            await query.message.reply_text("🎯 Claim tasks coming soon!")
-    except Exception as e:
-        logger.error(f"Callback error: {e}")
+    if query.data == 'balance':
+        await query.message.reply_text("💰 Your balance: 0 SOLIUM")
+    elif query.data == 'referral':
+        await query.message.reply_text("📢 Your referral link: Coming soon!")
+    elif query.data == 'rules':
+        rules = (
+            "📋 Airdrop Rules:\n\n"
+            "1. Join our Telegram group\n"
+            "2. Follow our Telegram channel\n"
+            "3. Follow us on X\n"
+            "4. Retweet pinned post\n"
+            "5. Join WhatsApp channel\n\n"
+            "💎 Bonus: 20 SOLIUM per referral!"
+        )
+        await query.message.reply_text(rules)
+    elif query.data == 'claim':
+        await query.message.reply_text("🎯 Claim tasks coming soon!")
 
 def main():
     logger.info("Starting bot")
