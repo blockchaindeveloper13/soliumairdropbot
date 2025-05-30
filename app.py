@@ -157,7 +157,7 @@ async def callback_query(update, context):
         await query.message.reply_text("🎯 Claim tasks coming soon! Check rules for tasks.")
 
 async def handle_webhook(request):
-    logger.debug(f"Received request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
+    logger.debug(f"Webhook request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
     app = request.app['telegram_app']
     try:
         if request.method == 'POST':
@@ -178,11 +178,19 @@ async def handle_webhook(request):
         return web.Response(status=500)
 
 async def index(request):
-    logger.debug(f"Received request: method={request.method}, path={request.path}, headers={request.headers}")
+    logger.debug(f"Index request: method={request.method}, path={request.path}, headers={request.headers}")
     return web.Response(text="🤖 Solium Airdrop Bot is running!")
 
 async def catch_all(request):
-    logger.debug(f"Catch-all request: method={request.method}, path={request.path}, headers={request.headers}")
+    logger.debug(f"Catch-all request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
+    try:
+        if request.method == 'POST':
+            data = await request.json()
+            logger.debug(f"Catch-all data: {data}")
+        else:
+            logger.debug("No JSON data in catch-all")
+    except Exception as e:
+        logger.error(f"Catch-all error: {e}")
     return web.Response(status=404, text=f"Route not found: {request.path}")
 
 def main():
@@ -199,18 +207,19 @@ def main():
     web_app = web.Application()
     web_app['telegram_app'] = app
     web_app.router.add_post('/webhook', handle_webhook)
-    web_app.router.add_post('/Webhook', handle_webhook)  # Büyük harf duyarlılığı için
-    web_app.router.add_post('/webhook/', handle_webhook)  # Sondaki / için
     web_app.router.add_get('/', index)
-    web_app.router.add_route('*', '/{path:.*}', catch_all)  # Tüm diğer rotalar
+    web_app.router.add_route('*', '/{path:.*}', catch_all)  # Tüm rotaları yakala
     
     port = int(os.environ.get("PORT", 8443))
     webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
     
     async def on_startup(app):
         await app['telegram_app'].initialize()
-        await app['telegram_app'].bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to {webhook_url}")
+        try:
+            await app['telegram_app'].bot.set_webhook(webhook_url)
+            logger.info(f"Webhook set to {webhook_url}")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
     
     async def on_shutdown(app):
         await app['telegram_app'].shutdown()
@@ -219,6 +228,7 @@ def main():
     web_app.on_startup.append(on_startup)
     web_app.on_shutdown.append(on_shutdown)
     
+    logger.info(f"Starting web server on port {port}")
     web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
