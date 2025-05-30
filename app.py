@@ -35,9 +35,9 @@ def init_db_pool():
             host=url.hostname,
             port=url.port
         )
-        logger.info("Veritabanı bağlantı havuzu oluşturuldu")
+        logger.info("✅ Veritabanı bağlantı havuzu oluşturuldu")
     except Exception as e:
-        logger.error(f"Veritabanı havuz hatası: {e}")
+        logger.error(f"❌ Veritabanı havuz hatası: {e}")
         raise
 
 def init_db():
@@ -54,9 +54,9 @@ def init_db():
             )
         ''')
         conn.commit()
-        logger.info("Veritabanı tablosu oluşturuldu")
+        logger.info("✅ Veritabanı tablosu oluşturuldu")
     except Exception as e:
-        logger.error(f"Veritabanı başlatma hatası: {e}")
+        logger.error(f"❌ Veritabanı başlatma hatası: {e}")
         raise
     finally:
         if 'cursor' in locals():
@@ -88,13 +88,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if cursor.fetchone():
                     cursor.execute('UPDATE users SET balance = balance + 20 WHERE user_id = %s', (referans_id,))
                     cursor.execute('UPDATE users SET referrer_id = %s WHERE user_id = %s', (referans_id, user_id))
-                    logger.info(f"{user_id} ID'li kullanıcı {referans_id} referansıyla kaydoldu")
+                    logger.info(f"👥 {user_id} ID'li kullanıcı {referans_id} referansıyla kaydoldu")
             except ValueError:
-                logger.error(f"Geçersiz referans ID: {referans_id}")
+                logger.error(f"⚠️ Geçersiz referans ID: {referans_id}")
         
         conn.commit()
     except Exception as e:
-        logger.error(f"Başlangıç hatası: {e}")
+        logger.error(f"🔥 Başlangıç hatası: {e}")
     finally:
         if 'cursor' in locals():
             cursor.close()
@@ -122,7 +122,7 @@ async def bakiye(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bakiye = cursor.fetchone()[0] or 0
         await update.message.reply_text(f"💰 Bakiyeniz: {bakiye} SOLIUM")
     except Exception as e:
-        logger.error(f"Bakiye hatası: {e}")
+        logger.error(f"🔥 Bakiye hatası: {e}")
         await update.message.reply_text("❌ Bakiye bilgisi alınamadı")
     finally:
         if 'cursor' in locals():
@@ -142,10 +142,10 @@ async def referans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📢 Referans Linkiniz: {referans_link}\n"
             f"Davet ettiğiniz her kişi için 20 SOLIUM kazanırsınız!\n"
-            f"Toplam referans sayınız: {referans_sayisi}"
+            f"🔢 Toplam referans sayınız: {referans_sayisi}"
         )
     except Exception as e:
-        logger.error(f"Referans hatası: {e}")
+        logger.error(f"🔥 Referans hatası: {e}")
         await update.message.reply_text(
             f"📢 Referans Linkiniz: {referans_link}\n"
             f"Davet ettiğiniz her kişi için 20 SOLIUM kazanırsınız!"
@@ -186,26 +186,24 @@ async def buton_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def webhook_handler(request):
     try:
-        # Webhook verisini al
+        logger.info("🔄 Webhook isteği alındı")
         data = await request.json()
+        logger.debug(f"📩 Gelen veri: {data}")
         
-        # Update nesnesini oluştur
         update = Update.de_json(data, request.app['telegram_app'].bot)
-        
-        # Update'i işle
         await request.app['telegram_app'].process_update(update)
         
-        # Başarılı yanıt dön
+        logger.info("✅ İstek başarıyla işlendi")
         return web.Response(text="OK")
     except Exception as e:
-        logger.error(f"Webhook hatası: {e}", exc_info=True)
+        logger.error(f"🔥 Webhook hatası: {e}", exc_info=True)
         return web.Response(status=500, text="Sunucu hatası")
 
 async def ana_sayfa(request):
     return web.Response(text="🤖 Solium Airdrop Botu Aktif!")
 
 def main():
-    logger.info("Bot başlatılıyor...")
+    logger.info("🚀 Bot başlatılıyor...")
     init_db_pool()
     init_db()
     
@@ -222,7 +220,7 @@ def main():
     web_app = web.Application()
     web_app['telegram_app'] = telegram_app
     
-    # Webhook endpointini ayarla
+    # Rotaları ayarla
     web_app.router.add_post('/webhook', webhook_handler)
     web_app.router.add_get('/', ana_sayfa)
     
@@ -232,11 +230,19 @@ def main():
     async def baslangic(app):
         await telegram_app.initialize()
         await telegram_app.bot.set_webhook(webhook_url)
-        logger.info(f"Webhook başarıyla ayarlandı: {webhook_url}")
+        logger.info(f"🌐 Webhook başarıyla ayarlandı: {webhook_url}")
     
     web_app.on_startup.append(baslangic)
     
-    logger.info(f"Sunucu {port} portunda başlatılıyor...")
+    # Hata yönetimi
+    async def hata_yonetimi(app):
+        logger.info("🛑 Uygulama kapatılıyor...")
+        db_pool.closeall()
+        logger.info("🔒 Veritabanı bağlantıları kapatıldı")
+    
+    web_app.on_shutdown.append(hata_yonetimi)
+    
+    logger.info(f"🌍 Sunucu {port} portunda başlatılıyor...")
     web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
