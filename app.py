@@ -9,7 +9,7 @@ from aiohttp import web
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
@@ -157,12 +157,12 @@ async def callback_query(update, context):
         await query.message.reply_text("🎯 Claim tasks coming soon! Check rules for tasks.")
 
 async def handle_webhook(request):
-    logger.info(f"Received request to /webhook: method={request.method}, path={request.path}")
+    logger.debug(f"Received request: method={request.method}, path={request.path}, headers={request.headers}, query={request.query}")
     app = request.app['telegram_app']
     try:
         if request.method == 'POST':
             data = await request.json()
-            logger.info(f"Webhook data: {data}")
+            logger.debug(f"Webhook data: {data}")
             update = Update.de_json(data, app.bot)
             if update:
                 logger.info(f"Processing update: {update}")
@@ -171,15 +171,19 @@ async def handle_webhook(request):
                 logger.warning("No valid update found in webhook data")
             return web.Response(status=200)
         else:
-            logger.warning(f"Invalid method for /webhook: {request.method}")
+            logger.warning(f"Invalid method for {request.path}: {request.method}")
             return web.Response(status=405)
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {e}", exc_info=True)
         return web.Response(status=500)
 
 async def index(request):
-    logger.info(f"Received request to /: method={request.method}, path={request.path}")
+    logger.debug(f"Received request: method={request.method}, path={request.path}, headers={request.headers}")
     return web.Response(text="🤖 Solium Airdrop Bot is running!")
+
+async def catch_all(request):
+    logger.debug(f"Catch-all request: method={request.method}, path={request.path}, headers={request.headers}")
+    return web.Response(status=404, text=f"Route not found: {request.path}")
 
 def main():
     logger.info("Starting bot")
@@ -195,7 +199,10 @@ def main():
     web_app = web.Application()
     web_app['telegram_app'] = app
     web_app.router.add_post('/webhook', handle_webhook)
+    web_app.router.add_post('/Webhook', handle_webhook)  # Büyük harf duyarlılığı için
+    web_app.router.add_post('/webhook/', handle_webhook)  # Sondaki / için
     web_app.router.add_get('/', index)
+    web_app.router.add_route('*', '/{path:.*}', catch_all)  # Tüm diğer rotalar
     
     port = int(os.environ.get("PORT", 8443))
     webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
