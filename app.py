@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-BOT_USERNAME = os.environ['BOT_USERNAME']
+BOT_USERNAME = os.environ['BOT_USERNAME']  # Zorunlu ortam değişkeni
 
 # Veritabanı bağlantı havuzu
 db_pool = None
@@ -25,7 +25,7 @@ def init_db_pool():
     try:
         url = urlparse(DATABASE_URL)
         db_pool = psycopg2.pool.SimpleConnectionPool(
-            1, 20,
+            1, 20,  # Min 1, max 20 bağlantı
             database=url.path[1:],
             user=url.username,
             password=url.password,
@@ -51,8 +51,8 @@ def init_db():
             )
         ''')
         conn.commit()
-        conn.close()
         cursor.close()
+        db_pool.putconn(conn)
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
@@ -96,7 +96,7 @@ async def start(update, context):
         [InlineKeyboardButton("🎁 Claim", callback_data='claim')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(f"🚖 Welcome to Solium Airdrop Bot, {username}!", reply_markup=reply_markup)
+    await update.message.reply_text(f"🚀 Welcome to Solium Airdrop Bot, {username}!", reply_markup=reply_markup)
 
 async def balance(update, context):
     user_id = update.effective_user.id
@@ -194,24 +194,22 @@ def main():
     port = int(os.environ.get("PORT", 8443))
     webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
     
-    # Webhook'u ayarla ve uygulamayı başlat
-    async def on_startup(_):
-        await app.initialize()
-        await app.bot.set_webhook(webhook_url)
+    # Webhook'u ayarla
+    async def on_startup(app):
+        await app['telegram_app'].initialize()
+        await app['telegram_app'].bot.set_webhook(webhook_url)
         logger.info(f"Webhook set to {webhook_url}")
     
-    async def on_shutdown(_):
-        await app.shutdown()
+    async def on_shutdown(app):
+        await app['telegram_app'].shutdown()
         logger.info("Application shutdown")
     
+    # Startup ve shutdown sinyallerini ekle
+    web_app.on_startup.append(on_startup)
+    web_app.on_shutdown.append(on_shutdown)
+    
     # Web uygulamasını başlat
-    web.run_app(
-        web_app,
-        host="0.0.0.0",
-        port=port,
-        startup=on_startup,
-        shutdown=on_shutdown
-    )
+    web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     main()
