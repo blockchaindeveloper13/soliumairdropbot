@@ -156,8 +156,11 @@ async def callback_query(update, context):
     elif query.data == 'claim':
         await query.message.reply_text("🎯 Claim tasks coming soon! Check rules for tasks.")
 
-async def index(request):
-    return web.Response(text="🤖 Solium Airdrop Bot is running!")
+async def handle_webhook(request):
+    app = request.app['telegram_app']
+    update = await request.json()
+    await app.update_queue.put(update)
+    return web.Response()
 
 def main():
     logger.info("Starting bot")
@@ -168,16 +171,17 @@ def main():
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CallbackQueryHandler(callback_query))
     
+    # aiohttp web uygulaması
     web_app = web.Application()
-    web_app.router.add_get('/', index)
+    web_app['telegram_app'] = app
+    web_app.router.add_post('/webhook', handle_webhook)
     
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8443)),
-        url_path="/webhook",
-        webhook_url="https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook",
-        web_app=web_app
-    )
+    # Webhook ayarları
+    port = int(os.environ.get("PORT", 8443))
+    webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
+    
+    # Web uygulamasını başlat
+    web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     main()
