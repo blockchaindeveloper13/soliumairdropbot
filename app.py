@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 DATABASE_URL = os.environ.get('DATABASE_URL')
-BOT_USERNAME = os.environ['BOT_USERNAME']  # Zorunlu ortam değişkeni
+BOT_USERNAME = os.environ['BOT_USERNAME']
 
 # Veritabanı bağlantı havuzu
 db_pool = None
@@ -25,7 +25,7 @@ def init_db_pool():
     try:
         url = urlparse(DATABASE_URL)
         db_pool = psycopg2.pool.SimpleConnectionPool(
-            1, 20,  # Min 1, max 20 bağlantı
+            1, 20,
             database=url.path[1:],
             user=url.username,
             password=url.password,
@@ -157,18 +157,28 @@ async def callback_query(update, context):
         await query.message.reply_text("🎯 Claim tasks coming soon! Check rules for tasks.")
 
 async def handle_webhook(request):
+    logger.info(f"Received request to /webhook: method={request.method}, path={request.path}")
     app = request.app['telegram_app']
     try:
-        data = await request.json()
-        update = Update.de_json(data, app.bot)
-        if update:
-            await app.process_update(update)
-        return web.Response(status=200)
+        if request.method == 'POST':
+            data = await request.json()
+            logger.info(f"Webhook data: {data}")
+            update = Update.de_json(data, app.bot)
+            if update:
+                logger.info(f"Processing update: {update}")
+                await app.process_update(update)
+            else:
+                logger.warning("No valid update found in webhook data")
+            return web.Response(status=200)
+        else:
+            logger.warning(f"Invalid method for /webhook: {request.method}")
+            return web.Response(status=405)
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return web.Response(status=500)
 
 async def index(request):
+    logger.info(f"Received request to /: method={request.method}, path={request.path}")
     return web.Response(text="🤖 Solium Airdrop Bot is running!")
 
 def main():
@@ -176,25 +186,20 @@ def main():
     init_db_pool()
     init_db()
     
-    # Telegram bot uygulamasını oluştur
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Handler'ları ekle
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("referral", referral))
     app.add_handler(CallbackQueryHandler(callback_query))
     
-    # aiohttp web uygulamasını oluştur
     web_app = web.Application()
     web_app['telegram_app'] = app
     web_app.router.add_post('/webhook', handle_webhook)
     web_app.router.add_get('/', index)
     
-    # Webhook ayarları
     port = int(os.environ.get("PORT", 8443))
     webhook_url = "https://soliumairdropbot-ef7a2a4b1280.herokuapp.com/webhook"
     
-    # Webhook'u ayarla
     async def on_startup(app):
         await app['telegram_app'].initialize()
         await app['telegram_app'].bot.set_webhook(webhook_url)
@@ -204,11 +209,9 @@ def main():
         await app['telegram_app'].shutdown()
         logger.info("Application shutdown")
     
-    # Startup ve shutdown sinyallerini ekle
     web_app.on_startup.append(on_startup)
     web_app.on_shutdown.append(on_shutdown)
     
-    # Web uygulamasını başlat
     web.run_app(web_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
