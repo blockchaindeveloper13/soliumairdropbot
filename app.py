@@ -473,11 +473,11 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute(''
+        cursor.execute('''
             SELECT has_referred, participated, referral_code 
             FROM users 
             WHERE user_id = %s
-        '', (user.id,))
+        ''', (user.id,))
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -498,11 +498,11 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ You can't use your own referral code!")
             return
         
-        cursor.execute(''
+        cursor.execute('''
             SELECT user_id, username 
             FROM users 
             WHERE referral_code = %s
-        '', (referral_code,))
+        ''', (referral_code,))
         referrer_data = cursor.fetchone()
         
         if not referrer_data:
@@ -511,7 +511,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             
         referrer_id, referrer_username = referrer_data
         
-        cursor.execute(''
+        cursor.execute('''
             UPDATE users 
             SET 
                 referrals = referrals + 1,
@@ -521,7 +521,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        '', (referrer_id,))
+        ''', (referrer_id,))
         referrer_new_balance = cursor.fetchone()[0]
         
         cursor.execute(''
@@ -533,7 +533,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        '', (referrer_id, user.id))
+        ''', (referrer_id, user.id))
         user_new_balance = cursor.fetchone()[0]
         
         conn.commit()
@@ -578,11 +578,11 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute(''
+        cursor.execute('''
             SELECT participated, bsc_address, referrer_id 
             FROM users 
             WHERE user_id = %s
-        '', (user.id,))
+        ''', (user.id,))
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -599,7 +599,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No wallet address provided. Complete Task 5.")
             return
         
-        cursor.execute(''
+        cursor.execute('''
             UPDATE users 
             SET 
                 participated = TRUE,
@@ -607,11 +607,11 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        '', (user.id,))
+        ''', (user.id,))
         final_balance = cursor.fetchone()[0]
         
         if referrer_id:
-            cursor.execute(''
+            cursor.execute('''
                 UPDATE users 
                 SET 
                     balance = balance + 20,
@@ -619,7 +619,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     updated_at = NOW()
                 WHERE user_id = %s
                 RETURNING balance, username
-            '', (referrer_id,))
+            ''', (referrer_id,))
             referrer_data = cursor.fetchone()
             referrer_new_balance = referrer_data[0]
             referrer_username = referrer_data[1]
@@ -686,7 +686,7 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute(''
+        cursor.execute('''
             SELECT 
                 user_id, 
                 username, 
@@ -699,7 +699,7 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
             FROM users 
             WHERE bsc_address IS NOT NULL
             ORDER BY created_at DESC
-        '')
+        ''')
         
         wallets = []
         for row in cursor.fetchall():
@@ -750,12 +750,17 @@ def main():
         
         application = Application.builder().token(BOT_TOKEN).build()
         
-        # CallbackQueryHandler pattern'ini düzeltildi
+        # Message handlers için özel bir fonksiyon
+        async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            if context.user_data.get('awaiting_wallet'):
+                await handle_wallet_address(update, context)
+            elif context.user_data.get('awaiting_referral'):
+                await handle_referral_code(update, context)
+        
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
-        application.add_handler(CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)$'))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_address))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_referral_code))
+        application.add_handler(CallbackQueryHandler(handle_task_button))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
         logger.info("✅ Bot initialized, starting polling...")
         application.run_polling(
