@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import json
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
@@ -190,7 +191,11 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
     if task_number == 5:
         keyboard.append([InlineKeyboardButton(task['button'], callback_data=task['callback'])])
     
-    keyboard.append([InlineKeyboardButton("🤝 Enter Referral Code", callback_data='enter_referral')])
+    # Her sekmede Balance ve Referral butonları
+    keyboard.append([
+        InlineKeyboardButton("💰 Balance", callback_data='show_balance'),
+        InlineKeyboardButton("🤝 Referral", callback_data='enter_referral')
+    ])
     
     nav_buttons = []
     if task_number > 1:
@@ -246,6 +251,10 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
+    if data == 'show_balance':
+        await show_user_balance(update, context)
+        return
+    
     if data == 'task_5_wallet':
         context.user_data['awaiting_wallet'] = True
         await query.edit_message_text(
@@ -295,6 +304,35 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except (IndexError, ValueError) as e:
             logger.error(f"Invalid task navigation data: {data}, error: {e}")
             await query.edit_message_text("❌ Invalid task navigation. Try again.")
+
+async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    query = update.callback_query
+    
+    conn = None
+    cursor = None
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user.id,))
+        balance_data = cursor.fetchone()
+        
+        if not balance_data:
+            await query.answer("❌ User not found. Use /start first.", show_alert=True)
+            return
+        
+        balance = balance_data[0]
+        await query.answer(f"💰 Your current balance: {balance} Solium", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"Balance check error for user_id {user.id}: {e}", exc_info=True)
+        await query.answer("❌ Error checking balance. Try again.", show_alert=True)
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -381,6 +419,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
+        # Kullanıcı bilgilerini kontrol et
         cursor.execute("SELECT has_referred, participated FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
         if not user_data:
@@ -395,6 +434,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ Airdrop completed, can't use referral code!")
             return
         
+        # Referrer kontrolü (chat ID'den bağımsız)
         cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
         if not cursor.fetchone():
             await update.message.reply_text("❌ Invalid referral code: User not found!")
@@ -404,17 +444,21 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ You can't refer yourself!")
             return
         
+        # Referrer'a ödül ver
         cursor.execute('''
             UPDATE users 
             SET referrals = referrals + 1,
                 balance = balance + 20,
                 updated_at = NOW()
             WHERE user_id = %s
-            RETURNING balance
+            RETURNING balance, username
         ''', (referrer_id,))
         
-        referrer_balance = cursor.fetchone()[0]
+        referrer_data = cursor.fetchone()
+        referrer_balance = referrer_data[0]
+        referrer_username = referrer_data[1]
         
+        # Kullanıcıya ödül ver ve referrer ID'sini kaydet
         cursor.execute('''
             UPDATE users 
             SET referrer_id = %s,
@@ -433,6 +477,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ Referral code accepted!\n+20 Solium added!\n\n💰 Your Balance: {user_balance} Solium\n\nReferrer got +20 Solium."
         )
         
+        # Referrer'a bildirim gönder
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
@@ -475,6 +520,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No wallet address provided. Complete Task 5.")
             return
         
+        # Tamamlanma ödülü ver
         cursor.execute('''
             UPDATE users 
             SET participated = TRUE,
@@ -486,6 +532,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         final_balance = cursor.fetchone()[0]
         
+        # Referrer varsa ona da ödül ver
         cursor.execute("SELECT referrer_id FROM users WHERE user_id = %s", (user.id,))
         referrer_id = cursor.fetchone()[0]
         if referrer_id:
@@ -520,6 +567,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(completion_text)
         
+        # Admin'e bildirim gönder
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -542,6 +590,66 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if conn:
             db_pool.putconn(conn)
 
+async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Admin access required!")
+        return
+        
+    logger.info("Admin requested wallet export")
+    
+    conn = None
+    cursor = None
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT user_id, username, bsc_address, balance, created_at 
+            FROM users 
+            WHERE bsc_address IS NOT NULL
+            ORDER BY created_at DESC
+        ''')
+        
+        wallets = []
+        for row in cursor.fetchall():
+            wallets.append({
+                'user_id': row[0],
+                'username': row[1] or 'no_username',
+                'wallet_address': row[2],
+                'balance': row[3],
+                'registration_date': row[4].isoformat()
+            })
+        
+        if not wallets:
+            await update.message.reply_text("❌ No wallet addresses found!")
+            return
+            
+        # JSON dosyası oluştur
+        filename = f"solium_wallets_{len(wallets)}.json"
+        with open(filename, 'w') as f:
+            json.dump(wallets, f, indent=2)
+        
+        # Admin'e gönder
+        with open(filename, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                caption=f"📊 Exported {len(wallets)} wallets",
+                filename=filename
+            )
+        
+        # Temizlik
+        os.remove(filename)
+        logger.info(f"Exported {len(wallets)} wallets")
+        
+    except Exception as e:
+        logger.error(f"Wallet export error: {e}", exc_info=True)
+        await update.message.reply_text("❌ Export failed. Check logs.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
+
 def main():
     try:
         logger.info("🚀 Starting Solium Airdrop Bot")
@@ -553,7 +661,8 @@ def main():
         
         handlers = [
             CommandHandler('start', start),
-            CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral)'),
+            CommandHandler('export_wallets', export_wallets),
+            CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: handle_wallet_address(u, c) or handle_referral_code(u, c))
         ]
         
