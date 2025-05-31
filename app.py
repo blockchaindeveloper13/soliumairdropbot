@@ -1,7 +1,6 @@
 import os
 import logging
 import re
-import json
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
@@ -254,7 +253,13 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             task_number = int(data.split('_')[1])
             await show_task(update, context, task_number)
         elif data.startswith('task_done_'):
-            task_number = int(data.split('_')[2])  # Fixed: Use index 2 for task number
+            task_number = int(data.split('_')[2])  # Düzeltildi: task_done_X için 2. indeks
+            if task_number < 1 or task_number > 5:  # Ek kontrol
+                logger.error(f"Invalid task number: {task_number}")
+                await query.message.reply_text("❌ Invalid task number. Please try again.")
+                cursor.close()
+                db_pool.putconn(conn)
+                return
             next_task = task_number + 1
             tasks = [
                 {'field': 'task1_completed', 'check': lambda: check_telegram_group(context, user_id)},
@@ -263,25 +268,22 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 {'field': 'task4_completed', 'check': lambda: manual_check(query, "Pinned post retweeted", 20)},
                 {'field': 'task5_completed', 'check': lambda: wallet_check(context, query, user_id)}
             ]
-            if task_number <= len(tasks):
-                task = tasks[task_number-1]
-                result = await task['check']()
-                if result.get('success'):
-                    cursor.execute(
-                        f"UPDATE users SET {task['field']} = TRUE, balance = balance + %s, current_task = %s WHERE user_id = %s",
-                        (result.get('reward', 0), next_task, user_id)
-                    )
-                    conn.commit()
-                    await query.message.reply_text(
-                        f"✅ Task {task_number} completed!\n"
-                        f"+{result.get('reward', 0)} Solium earned!\n\n"
-                        f"Proceeding to the next task..."
-                    )
-                    await show_task(update, context, next_task)
-                else:
-                    await query.message.reply_text(result.get('message', "❌ Task not completed!"))
+            task = tasks[task_number-1]
+            result = await task['check']()
+            if result.get('success'):
+                cursor.execute(
+                    f"UPDATE users SET {task['field']} = TRUE, balance = balance + %s, current_task = %s WHERE user_id = %s",
+                    (result.get('reward', 0), next_task, user_id)
+                )
+                conn.commit()
+                await query.message.reply_text(
+                    f"✅ Task {task_number} completed!\n"
+                    f"+{result.get('reward', 0)} Solium earned!\n\n"
+                    f"Proceeding to the next task..."
+                )
+                await show_task(update, context, next_task)
             else:
-                await complete_airdrop(update, context)
+                await query.message.reply_text(result.get('message', "❌ Task not completed!"))
 
         cursor.close()
         db_pool.putconn(conn)
