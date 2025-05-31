@@ -361,6 +361,8 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     query = update.callback_query
     
+    logger.info(f"Showing balance for user {user.id}")  # Log ekledik
+    
     conn = None
     cursor = None
     try:
@@ -376,6 +378,7 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data = cursor.fetchone()
         
         if not user_data:
+            logger.warning(f"User {user.id} not found in database")  # Log
             await query.answer("❌ User not found. Use /start first.", show_alert=True)
             return
         
@@ -388,6 +391,7 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎁 Referral Rewards: {referral_rewards} Solium"
         )
         
+        logger.info(f"Balance shown for user {user.id}: {balance} Solium")  # Log
         await query.answer(message, show_alert=True)
         
     except Exception as e:
@@ -767,10 +771,11 @@ def main():
         
         application = Application.builder().token(BOT_TOKEN).build()
         
+        # DÜZELTME: CallbackQueryHandler pattern'ini güncelle
         handlers = [
             CommandHandler('start', start),
             CommandHandler('export_wallets', export_wallets),
-            CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)'),
+            CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)$'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: handle_wallet_address(u, c) or handle_referral_code(u, c))
         ]
         
