@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import json
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
@@ -51,6 +52,8 @@ def init_db_pool():
         raise
 
 def init_db():
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -89,18 +92,23 @@ def init_db():
             cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} {column_type}")
         conn.commit()
         logger.info("Database initialized successfully")
-        cursor.close()
-        db_pool.putconn(conn)
     except Exception as e:
         logger.error(f"Database initialization error: {e}", exc_info=True)
         raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    username = update.message.from_user.username
+    username = update.message.from_user.username or "Unknown"
     args = context.args
     logger.debug(f"Start command received for user_id: {user_id}, username: {username}, args: {args}")
 
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -115,8 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if user and user[0]:
             await update.message.reply_text("🎉 You've already participated in the airdrop! You can't join again.")
-            cursor.close()
-            db_pool.putconn(conn)
             return
 
         # Handle referral
@@ -132,8 +138,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             (referrer_id,)
                         )
                         cursor.execute(
-                            "INSERT INTO users (user_id, balance, referrer_id, username) VALUES (%s, 20, %s, %s) ON CONFLICT (user_id) DO NOTHING",
-                            (user_id, referrer_id, username)
+                            "INSERT INTO users (user_id, balance, referrer_id, username) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING",
+                            (user_id, 20, referrer_id, username)
                         )
                         await update.message.reply_text(
                             "🎉 You joined through a referral link! Both you and the referrer received 20 Solium."
@@ -141,34 +147,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         logger.warning(f"Referrer ID {referrer_id} not found")
                         cursor.execute(
-                            "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
                             (user_id, username)
                         )
                 else:
                     cursor.execute(
-                        "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
                         (user_id, username)
                     )
             except ValueError as ve:
                 logger.error(f"Invalid referrer ID: {ve}")
                 cursor.execute(
-                    "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
                     (user_id, username)
                 )
         else:
             cursor.execute(
-                "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
                 (user_id, username)
             )
 
         conn.commit()
-        cursor.close()
-        db_pool.putconn(conn)
         logger.debug(f"User {user_id} inserted/updated, showing task 1")
         await show_task(update, context, 1)
     except Exception as e:
         logger.error(f"Error in start: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_number: int):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
@@ -237,6 +246,8 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data = query.data
     logger.debug(f"Handling task button: {data} for user_id: {user_id}")
 
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -245,21 +256,24 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if user and user[0]:
             await query.message.reply_text("❌ You've already completed the airdrop!")
-            cursor.close()
-            db_pool.putconn(conn)
             return
 
         if data.startswith('task_'):
             task_number = int(data.split('_')[1])
             await show_task(update, context, task_number)
         elif data.startswith('task_done_'):
-            task_number = int(data.split('_')[2])  # Düzeltildi: task_done_X için 2. indeks
-            if task_number < 1 or task_number > 5:  # Ek kontrol
+            try:
+                task_number = int(data.split('_')[2])  # task_done_X için 2. indeks
+            except (IndexError, ValueError) as e:
+                logger.error(f"Invalid callback data: {data}, error: {e}")
+                await query.message.reply_text("❌ Invalid task data. Please try again.")
+                return
+
+            if task_number < 1 or task_number > 5:
                 logger.error(f"Invalid task number: {task_number}")
                 await query.message.reply_text("❌ Invalid task number. Please try again.")
-                cursor.close()
-                db_pool.putconn(conn)
                 return
+
             next_task = task_number + 1
             tasks = [
                 {'field': 'task1_completed', 'check': lambda: check_telegram_group(context, user_id)},
@@ -284,14 +298,16 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await show_task(update, context, next_task)
             else:
                 await query.message.reply_text(result.get('message', "❌ Task not completed!"))
-
-        cursor.close()
-        db_pool.putconn(conn)
     except Exception as e:
         logger.error(f"Error in handle_task_button: {e}", exc_info=True)
         await query.message.reply_text("❌ An error occurred. Please try again later.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
-async def check_telegram_group(context, user_id):
+async def check_telegram_group(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     try:
         member = await context.bot.get_chat_member(GROUP_ID, user_id)
         if member.status in ['member', 'administrator', 'creator']:
@@ -301,7 +317,7 @@ async def check_telegram_group(context, user_id):
         logger.error(f"Telegram group check error: {e}")
         return {'success': False, 'message': "❌ Error checking group membership. Try again later."}
 
-async def check_telegram_channel(context, user_id):
+async def check_telegram_channel(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     try:
         member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
         if member.status in ['member', 'administrator', 'creator']:
@@ -311,14 +327,14 @@ async def check_telegram_channel(context, user_id):
         logger.error(f"Telegram channel check error: {e}")
         return {'success': False, 'message': "❌ Error checking channel membership. Try again later."}
 
-async def manual_check(query, message, reward):
+async def manual_check(query, message: str, reward: int):
     await query.message.reply_text(
         f"✅ {message}! This will be manually verified by admins.\n"
         f"+{reward} Solium recorded."
     )
     return {'success': True, 'reward': reward}
 
-async def wallet_check(context, query, user_id):
+async def wallet_check(context: ContextTypes.DEFAULT_TYPE, query, user_id: int):
     await query.message.reply_text(
         "💰 Please send your BSC wallet address:\n\n"
         "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
@@ -335,6 +351,8 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
     if not context.user_data.get('awaiting_wallet'):
         return
 
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -358,17 +376,21 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
                 "Please enter a valid address (42 characters starting with 0x).\n"
                 "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
             )
-
-        cursor.close()
-        db_pool.putconn(conn)
     except Exception as e:
         logger.error(f"Error in handle_wallet_address: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     logger.debug(f"Completing airdrop for user_id: {user_id}")
 
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -401,18 +423,22 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💵 Total Earned: {balance} Solium\n\n"
             f"Rewards will be sent to your BSC address."
         )
-
-        cursor.close()
-        db_pool.putconn(conn)
     except Exception as e:
         logger.error(f"Error in complete_airdrop: {e}", exc_info=True)
         await (update.message or update.callback_query.message).reply_text("❌ An error occurred. Please try again later.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Only admins can use this command!")
         return
 
+    conn = None
+    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
@@ -422,33 +448,26 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not addresses:
             await update.message.reply_text("❌ No wallet addresses found!")
-            cursor.close()
-            db_pool.putconn(conn)
             return
 
         filename = "bsc_addresses.json"
         with open(filename, 'w') as f:
             json.dump(addresses, f, indent=2)
 
-        try:
-            with open(filename, 'rb') as f:
-                await update.message.reply_document(
-                    document=f,
-                    caption=f"📋 Total {len(addresses)} BSC wallet addresses"
-                )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error sending file: {str(e)}")
-        finally:
-            try:
-                os.remove(filename)
-            except:
-                pass
-
-        cursor.close()
-        db_pool.putconn(conn)
+        with open(filename, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                caption=f"📋 Total {len(addresses)} BSC wallet addresses"
+            )
+        os.remove(filename)
     except Exception as e:
         logger.error(f"Error in export_addresses: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
 def main():
     try:
