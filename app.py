@@ -2,6 +2,8 @@ import os
 import logging
 import re
 import json
+import random
+import string
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import pool
@@ -74,6 +76,9 @@ def init_db():
                 balance INTEGER DEFAULT 0 NOT NULL CHECK (balance >= 0),
                 referrals INTEGER DEFAULT 0 NOT NULL CHECK (referrals >= 0),
                 referrer_id BIGINT,
+                referral_code VARCHAR(10) UNIQUE,
+                referral_count INTEGER DEFAULT 0,
+                referral_rewards INTEGER DEFAULT 0,
                 participated BOOLEAN DEFAULT FALSE NOT NULL,
                 current_task INTEGER DEFAULT 1 NOT NULL CHECK (current_task BETWEEN 1 AND 6),
                 task1_completed BOOLEAN DEFAULT FALSE NOT NULL,
@@ -89,6 +94,7 @@ def init_db():
         
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_referrer_id ON users(referrer_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_participated ON users(participated)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code)")
         
         conn.commit()
         logger.info("✅ Database initialized")
@@ -102,6 +108,9 @@ def init_db():
             cursor.close()
         if conn:
             db_pool.putconn(conn)
+
+def generate_referral_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -117,23 +126,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT participated, current_task FROM users WHERE user_id = %s", (user.id,))
+        cursor.execute("SELECT participated, current_task, referral_code FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
         
         if user_data and user_data[0]:
             await update.message.reply_text("🎉 Airdrop already completed!")
             return
             
-        cursor.execute('''
-            INSERT INTO users (user_id, username)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id) DO UPDATE
-            SET username = EXCLUDED.username
-            RETURNING current_task
-        ''', (user.id, user.username))
+        if user_data and not user_data[2]:  # Referral kodu yoksa oluştur
+            referral_code = generate_referral_code()
+            cursor.execute('''
+                UPDATE users 
+                SET referral_code = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s
+            ''', (referral_code, user.id))
+        
+        if not user_data:  # Yeni kullanıcı
+            referral_code = generate_referral_code()
+            cursor.execute('''
+                INSERT INTO users (user_id, username, referral_code)
+                VALUES (%s, %s, %s)
+                RETURNING current_task
+            ''', (user.id, user.username, referral_code))
+        else:  # Var olan kullanıcı
+            cursor.execute('''
+                UPDATE users 
+                SET username = %s,
+                    updated_at = NOW()
+                WHERE user_id = %s
+                RETURNING current_task
+            ''', (user.username, user.id))
         
         current_task = cursor.fetchone()[0]
         conn.commit()
+        
+        # Kullanıcıya referral kodunu göster
+        if not user_data or not user_data[2]:
+            await update.message.reply_text(
+                f"🎉 Your unique referral code: {referral_code}\n\n"
+                f"Share this code to earn more rewards!"
+            )
+        
         await show_task(update, context, current_task)
         
     except Exception as e:
@@ -245,9 +279,9 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data == 'enter_referral':
         context.user_data['awaiting_referral'] = True
         await query.edit_message_text(
-            "🤝 Please enter the referral code (user ID):\n\n"
-            "Example: 123456789\n\n"
-            "⚠️ You cannot use your own ID!"
+            "🤝 Please enter the referral code:\n\n"
+            "Example: ABC12345\n\n"
+            "⚠️ You cannot use your own code!"
         )
         return
     
@@ -315,15 +349,28 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user.id,))
-        balance_data = cursor.fetchone()
+        cursor.execute('''
+            SELECT balance, referral_code, referral_count, referral_rewards 
+            FROM users 
+            WHERE user_id = %s
+        ''', (user.id,))
         
-        if not balance_data:
+        user_data = cursor.fetchone()
+        
+        if not user_data:
             await query.answer("❌ User not found. Use /start first.", show_alert=True)
             return
         
-        balance = balance_data[0]
-        await query.answer(f"💰 Your current balance: {balance} Solium", show_alert=True)
+        balance, referral_code, referral_count, referral_rewards = user_data
+        
+        message = (
+            f"💰 Your Balance: {balance} Solium\n\n"
+            f"🔗 Your Referral Code: {referral_code}\n"
+            f"👥 Total Referrals: {referral_count}\n"
+            f"🎁 Referral Rewards: {referral_rewards} Solium"
+        )
+        
+        await query.answer(message, show_alert=True)
         
     except Exception as e:
         logger.error(f"Balance check error for user_id {user.id}: {e}", exc_info=True)
@@ -397,21 +444,13 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = update.message.text.strip()
+    referral_code = update.message.text.strip().upper()
     
     if not context.user_data.get('awaiting_referral'):
-        logger.debug(f"User {user.id} sent text without awaiting referral: {text}")
+        logger.debug(f"User {user.id} sent text without awaiting referral: {referral_code}")
         return
     
-    logger.info(f"Processing referral code for user {user.id}: {text}")
-    
-    try:
-        referrer_id = int(text)
-    except ValueError:
-        await update.message.reply_text(
-            "❌ Invalid referral code!\n\nMust be a numeric user ID.\nExample: 123456789\n\nTry again:"
-        )
-        return
+    logger.info(f"Processing referral code for user {user.id}: {referral_code}")
     
     conn = None
     cursor = None
@@ -419,69 +458,94 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        # Kullanıcı bilgilerini kontrol et
-        cursor.execute("SELECT has_referred, participated FROM users WHERE user_id = %s", (user.id,))
+        # 1. Kullanıcı bilgilerini kontrol et
+        cursor.execute('''
+            SELECT has_referred, participated, referral_code 
+            FROM users 
+            WHERE user_id = %s
+        ''', (user.id,))
         user_data = cursor.fetchone()
+        
         if not user_data:
             await update.message.reply_text("❌ User not found. Use /start.")
             return
             
-        if user_data[0]:
+        has_referred, participated, user_referral_code = user_data
+        
+        if has_referred:
             await update.message.reply_text("❌ You've already used a referral code!")
             return
             
-        if user_data[1]:
+        if participated:
             await update.message.reply_text("❌ Airdrop completed, can't use referral code!")
             return
+            
+        if referral_code == user_referral_code:
+            await update.message.reply_text("❌ You can't use your own referral code!")
+            return
         
-        # Referrer kontrolü (chat ID'den bağımsız)
-        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
-        if not cursor.fetchone():
-            await update.message.reply_text("❌ Invalid referral code: User not found!")
+        # 2. Referral kodunu kontrol et
+        cursor.execute('''
+            SELECT user_id, username 
+            FROM users 
+            WHERE referral_code = %s
+        ''', (referral_code,))
+        referrer_data = cursor.fetchone()
+        
+        if not referrer_data:
+            await update.message.reply_text("❌ Invalid referral code!")
             return
             
-        if referrer_id == user.id:
-            await update.message.reply_text("❌ You can't refer yourself!")
-            return
+        referrer_id, referrer_username = referrer_data
         
-        # Referrer'a ödül ver
+        # 3. Referans işlemlerini gerçekleştir
+        # Referrer'a ödül ver (20 Solium)
         cursor.execute('''
             UPDATE users 
-            SET referrals = referrals + 1,
+            SET 
+                referrals = referrals + 1,
+                referral_count = referral_count + 1,
                 balance = balance + 20,
+                referral_rewards = referral_rewards + 20,
                 updated_at = NOW()
             WHERE user_id = %s
-            RETURNING balance, username
+            RETURNING balance
         ''', (referrer_id,))
+        referrer_new_balance = cursor.fetchone()[0]
         
-        referrer_data = cursor.fetchone()
-        referrer_balance = referrer_data[0]
-        referrer_username = referrer_data[1]
-        
-        # Kullanıcıya ödül ver ve referrer ID'sini kaydet
+        # Kullanıcıya ödül ver (20 Solium)
         cursor.execute('''
             UPDATE users 
-            SET referrer_id = %s,
-                balance = balance + 20,
+            SET 
+                referrer_id = %s,
                 has_referred = TRUE,
+                balance = balance + 20,
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
         ''', (referrer_id, user.id))
+        user_new_balance = cursor.fetchone()[0]
         
-        user_balance = cursor.fetchone()[0]
         conn.commit()
         
         context.user_data['awaiting_referral'] = False
+        
+        # 4. Kullanıcıya bilgi ver
         await update.message.reply_text(
-            f"✅ Referral code accepted!\n+20 Solium added!\n\n💰 Your Balance: {user_balance} Solium\n\nReferrer got +20 Solium."
+            f"✅ Referral code accepted!\n\n"
+            f"💰 +20 Solium added to your balance!\n"
+            f"💵 Your new balance: {user_new_balance} Solium\n\n"
+            f"👥 Referred by: @{referrer_username or referrer_id}"
         )
         
-        # Referrer'a bildirim gönder
+        # 5. Referrer'a bildirim gönder
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
-                text=f"🎉 User @{user.username or user.id} used your referral code! +20 Solium added!\n💰 Your Balance: {referrer_balance} Solium"
+                text=f"🎉 New referral!\n\n"
+                     f"User @{user.username or user.id} used your referral code.\n"
+                     f"💰 +20 Solium added to your balance!\n"
+                     f"💵 Your new balance: {referrer_new_balance} Solium"
             )
         except Exception as e:
             logger.warning(f"Failed to notify referrer {referrer_id}: {e}")
@@ -506,59 +570,73 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT participated, bsc_address FROM users WHERE user_id = %s", (user.id,))
+        cursor.execute('''
+            SELECT participated, bsc_address, referrer_id 
+            FROM users 
+            WHERE user_id = %s
+        ''', (user.id,))
         user_data = cursor.fetchone()
+        
         if not user_data:
             await update.message.reply_text("❌ User not found. Use /start.")
             return
             
-        if user_data[0]:
+        participated, bsc_address, referrer_id = user_data
+        
+        if participated:
             await update.message.reply_text("🎉 Airdrop already completed!")
             return
             
-        if not user_data[1]:
+        if not bsc_address:
             await update.message.reply_text("❌ No wallet address provided. Complete Task 5.")
             return
         
-        # Tamamlanma ödülü ver
+        # Tamamlanma ödülü ver (100 Solium)
         cursor.execute('''
             UPDATE users 
-            SET participated = TRUE,
+            SET 
+                participated = TRUE,
                 balance = balance + 100,
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
         ''', (user.id,))
-        
         final_balance = cursor.fetchone()[0]
         
-        # Referrer varsa ona da ödül ver
-        cursor.execute("SELECT referrer_id FROM users WHERE user_id = %s", (user.id,))
-        referrer_id = cursor.fetchone()[0]
+        # Referrer varsa ona da ödül ver (20 Solium)
         if referrer_id:
             cursor.execute('''
                 UPDATE users 
-                SET balance = balance + 20,
+                SET 
+                    balance = balance + 20,
+                    referral_rewards = referral_rewards + 20,
                     updated_at = NOW()
                 WHERE user_id = %s
-                RETURNING balance
+                RETURNING balance, username
             ''', (referrer_id,))
+            referrer_data = cursor.fetchone()
+            referrer_new_balance = referrer_data[0]
+            referrer_username = referrer_data[1]
             
-            referrer_balance = cursor.fetchone()[0]
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
-                    text=f"🎉 Your referral @{user.username or user.id} completed the airdrop! +20 Solium added!\n💰 Your Balance: {referrer_balance} Solium"
+                    text=f"🎉 Your referral completed the airdrop!\n\n"
+                         f"User: @{user.username or user.id}\n"
+                         f"💰 +20 Solium added to your balance!\n"
+                         f"💵 Your new balance: {referrer_new_balance} Solium"
                 )
             except Exception as e:
                 logger.warning(f"Couldn't notify referrer: {e}")
         
         conn.commit()
         
+        # Kullanıcıya tamamlanma mesajı gönder
         completion_text = (
             f"🎉 AIRDROP COMPLETED!\n\n"
             f"💰 Total Earned: {final_balance} Solium\n\n"
-            f"Tokens will be distributed to your wallet after verification.\n\n"
+            f"Tokens will be distributed to:\n"
+            f"{bsc_address}\n\n"
             f"Thank you for participating!"
         )
         
@@ -572,9 +650,10 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"🚀 New airdrop completion:\n\n"
-                     f"User: @{user.username or 'no_username'} ({user.id})\n"
+                     f"User: @{user.username or user.id}\n"
+                     f"Wallet: {bsc_address}\n"
                      f"Balance: {final_balance} Solium\n"
-                     f"Wallet: {user_data[1]}"
+                     f"Referrer: {'@'+referrer_username if referrer_id else 'None'}"
             )
         except Exception as e:
             logger.error(f"Admin notification failed: {e}")
@@ -604,7 +683,15 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT user_id, username, bsc_address, balance, created_at 
+            SELECT 
+                user_id, 
+                username, 
+                bsc_address, 
+                balance, 
+                referral_code,
+                referral_count,
+                referral_rewards,
+                created_at 
             FROM users 
             WHERE bsc_address IS NOT NULL
             ORDER BY created_at DESC
@@ -617,7 +704,10 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'username': row[1] or 'no_username',
                 'wallet_address': row[2],
                 'balance': row[3],
-                'registration_date': row[4].isoformat()
+                'referral_code': row[4],
+                'referral_count': row[5],
+                'referral_rewards': row[6],
+                'registration_date': row[7].isoformat()
             })
         
         if not wallets:
@@ -627,7 +717,7 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # JSON dosyası oluştur
         filename = f"solium_wallets_{len(wallets)}.json"
         with open(filename, 'w') as f:
-            json.dump(wallets, f, indent=2)
+            json.dump(wallets, f, indent=2, ensure_ascii=False)
         
         # Admin'e gönder
         with open(filename, 'rb') as f:
