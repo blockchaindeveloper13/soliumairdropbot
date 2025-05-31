@@ -18,13 +18,13 @@ from telegram.ext import (
 # Logging setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Debug seviyesine geçtik
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
 # Environment variables
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))  # Varsayılan 0, hata önlemek için
+ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@soliumcoin')
 GROUP_ID = os.environ.get('GROUP_ID', '@soliumcoinchat')
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -35,7 +35,7 @@ db_pool = None
 def init_db_pool():
     global db_pool
     try:
-        logger.debug(f"Connecting to database: {DATABASE_URL}")
+        logger.debug(f"Connecting to database: {DATABASE_URL[:20]}...")
         url = urlparse(DATABASE_URL)
         db_pool = psycopg2.pool.SimpleConnectionPool(
             1, 20,
@@ -73,9 +73,9 @@ def init_db():
             )
         ''')
         conn.commit()
+        logger.info("Database initialized successfully")
         cursor.close()
         db_pool.putconn(conn)
-        logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization error: {e}", exc_info=True)
         raise
@@ -83,43 +83,51 @@ def init_db():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     args = context.args
-    referrer_id = None
-
     logger.debug(f"Start command received for user_id: {user_id}, args: {args}")
 
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
 
+        # Test simple query
+        cursor.execute("SELECT 1")
+        logger.debug("Test query successful")
+
+        # Check if user exists
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user_id,))
         user = cursor.fetchone()
 
-        if user and user['participated']:
+        if user and user[0]:
             await update.message.reply_text("🎉 You've already participated in the airdrop! You can't join again.")
             cursor.close()
             db_pool.putconn(conn)
             return
 
+        # Handle referral
         if args and args[0].startswith("ref"):
             try:
                 referrer_id = int(args[0][3:])
                 logger.debug(f"Referrer ID: {referrer_id}")
                 if referrer_id != user_id:
-                    cursor.execute(
-                        "UPDATE users SET referrals = referrals + 1, balance = balance + 20 WHERE user_id = %s",
-                        (referrer_id,)
-                    )
-                    cursor.execute("""
-                        INSERT INTO users 
-                        (user_id, balance, referrer_id) 
-                        VALUES (%s, 20, %s)
-                        ON CONFLICT (user_id) DO UPDATE 
-                        SET referrer_id = EXCLUDED.referrer_id, balance = users.balance + 20
-                    """, (user_id, referrer_id))
-                    await update.message.reply_text(
-                        "🎉 You joined through a referral link! "
-                        "Both you and the referrer received 20 Solium."
-                    )
+                    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
+                    if cursor.fetchone():
+                        cursor.execute(
+                            "UPDATE users SET referrals = referrals + 1, balance = balance + 20 WHERE user_id = %s",
+                            (referrer_id,)
+                        )
+                        cursor.execute(
+                            "INSERT INTO users (user_id, balance, referrer_id) VALUES (%s, 20, %s) ON CONFLICT (user_id) DO NOTHING",
+                            (user_id, referrer_id)
+                        )
+                        await update.message.reply_text(
+                            "🎉 You joined through a referral link! Both you and the referrer received 20 Solium."
+                        )
+                    else:
+                        logger.warning(f"Referrer ID {referrer_id} not found")
+                        cursor.execute(
+                            "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                            (user_id,)
+                        )
                 else:
                     cursor.execute(
                         "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
@@ -140,6 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         cursor.close()
         db_pool.putconn(conn)
+        logger.debug(f"User {user_id} inserted/updated, showing task 1")
         await show_task(update, context, 1)
     except Exception as e:
         logger.error(f"Error in start: {e}", exc_info=True)
