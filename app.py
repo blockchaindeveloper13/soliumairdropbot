@@ -68,7 +68,6 @@ def init_db():
         
         logger.info("Initializing DB tables...")
         
-        # Önce ana tabloyu oluştur
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -93,7 +92,6 @@ def init_db():
             )
         ''')
         
-        # Sütun eklemeleri (eğer yoksa)
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(10)")
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
@@ -101,16 +99,13 @@ def init_db():
         except Exception as e:
             logger.warning(f"Column addition warning: {e}")
         
-        # Index'leri oluştur
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_referrer_id ON users(referrer_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_participated ON users(participated)")
         
-        # referral_code için UNIQUE constraint ekle
         try:
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
-            # Eğer hala sorun olursa, sütunu tekrar eklemeyi dene
             cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(10)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
         
@@ -151,7 +146,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🎉 Airdrop already completed!")
             return
             
-        if user_data and not user_data[2]:  # Referral kodu yoksa oluştur
+        if user_data and not user_data[2]:
             referral_code = generate_referral_code()
             cursor.execute('''
                 UPDATE users 
@@ -160,14 +155,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE user_id = %s
             ''', (referral_code, user.id))
         
-        if not user_data:  # Yeni kullanıcı
+        if not user_data:
             referral_code = generate_referral_code()
             cursor.execute('''
                 INSERT INTO users (user_id, username, referral_code)
                 VALUES (%s, %s, %s)
                 RETURNING current_task
             ''', (user.id, user.username, referral_code))
-        else:  # Var olan kullanıcı
+        else:
             cursor.execute('''
                 UPDATE users 
                 SET username = %s,
@@ -179,7 +174,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_task = cursor.fetchone()[0]
         conn.commit()
         
-        # Kullanıcıya referral kodunu göster
         if not user_data or not user_data[2]:
             await update.message.reply_text(
                 f"🎉 Your unique referral code: {referral_code}\n\n"
@@ -243,7 +237,6 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
     if task_number == 5:
         keyboard.append([InlineKeyboardButton(task['button'], callback_data=task['callback'])])
     
-    # Her sekmede Balance ve Referral butonları
     keyboard.append([
         InlineKeyboardButton("💰 Balance", callback_data='show_balance'),
         InlineKeyboardButton("🤝 Referral", callback_data='enter_referral')
@@ -325,7 +318,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 conn = db_pool.getconn()
                 cursor = conn.cursor()
                 
-                if task_number <= 4:  # Task 1-4 için otomatik tamamla
+                if task_number <= 4:
                     task_column = f'task{task_number}_completed'
                     cursor.execute(f'''
                         UPDATE users 
@@ -358,10 +351,10 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.edit_message_text("❌ Invalid task navigation. Try again.")
 
 async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
     query = update.callback_query
+    user = query.from_user
     
-    logger.info(f"Showing balance for user {user.id}")  # Log ekledik
+    logger.info(f"Showing balance for user {user.id}")
     
     conn = None
     cursor = None
@@ -378,7 +371,7 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data = cursor.fetchone()
         
         if not user_data:
-            logger.warning(f"User {user.id} not found in database")  # Log
+            logger.warning(f"User {user.id} not found in database")
             await query.answer("❌ User not found. Use /start first.", show_alert=True)
             return
         
@@ -391,7 +384,7 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎁 Referral Rewards: {referral_rewards} Solium"
         )
         
-        logger.info(f"Balance shown for user {user.id}: {balance} Solium")  # Log
+        logger.info(f"Balance shown for user {user.id}: {balance} Solium")
         await query.answer(message, show_alert=True)
         
     except Exception as e:
@@ -480,12 +473,11 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        # 1. Kullanıcı bilgilerini kontrol et
-        cursor.execute('''
+        cursor.execute(''
             SELECT has_referred, participated, referral_code 
             FROM users 
             WHERE user_id = %s
-        ''', (user.id,))
+        '', (user.id,))
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -506,12 +498,11 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ You can't use your own referral code!")
             return
         
-        # 2. Referral kodunu kontrol et
-        cursor.execute('''
+        cursor.execute(''
             SELECT user_id, username 
             FROM users 
             WHERE referral_code = %s
-        ''', (referral_code,))
+        '', (referral_code,))
         referrer_data = cursor.fetchone()
         
         if not referrer_data:
@@ -520,9 +511,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             
         referrer_id, referrer_username = referrer_data
         
-        # 3. Referans işlemlerini gerçekleştir
-        # Referrer'a ödül ver (20 Solium)
-        cursor.execute('''
+        cursor.execute(''
             UPDATE users 
             SET 
                 referrals = referrals + 1,
@@ -532,11 +521,10 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        ''', (referrer_id,))
+        '', (referrer_id,))
         referrer_new_balance = cursor.fetchone()[0]
         
-        # Kullanıcıya ödül ver (20 Solium)
-        cursor.execute('''
+        cursor.execute(''
             UPDATE users 
             SET 
                 referrer_id = %s,
@@ -545,14 +533,13 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        ''', (referrer_id, user.id))
+        '', (referrer_id, user.id))
         user_new_balance = cursor.fetchone()[0]
         
         conn.commit()
         
         context.user_data['awaiting_referral'] = False
         
-        # 4. Kullanıcıya bilgi ver
         await update.message.reply_text(
             f"✅ Referral code accepted!\n\n"
             f"💰 +20 Solium added to your balance!\n"
@@ -560,7 +547,6 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             f"👥 Referred by: @{referrer_username or referrer_id}"
         )
         
-        # 5. Referrer'a bildirim gönder
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
@@ -592,11 +578,11 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute('''
+        cursor.execute(''
             SELECT participated, bsc_address, referrer_id 
             FROM users 
             WHERE user_id = %s
-        ''', (user.id,))
+        '', (user.id,))
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -613,8 +599,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No wallet address provided. Complete Task 5.")
             return
         
-        # Tamamlanma ödülü ver (100 Solium)
-        cursor.execute('''
+        cursor.execute(''
             UPDATE users 
             SET 
                 participated = TRUE,
@@ -622,12 +607,11 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 updated_at = NOW()
             WHERE user_id = %s
             RETURNING balance
-        ''', (user.id,))
+        '', (user.id,))
         final_balance = cursor.fetchone()[0]
         
-        # Referrer varsa ona da ödül ver (20 Solium)
         if referrer_id:
-            cursor.execute('''
+            cursor.execute(''
                 UPDATE users 
                 SET 
                     balance = balance + 20,
@@ -635,7 +619,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     updated_at = NOW()
                 WHERE user_id = %s
                 RETURNING balance, username
-            ''', (referrer_id,))
+            '', (referrer_id,))
             referrer_data = cursor.fetchone()
             referrer_new_balance = referrer_data[0]
             referrer_username = referrer_data[1]
@@ -653,7 +637,6 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         conn.commit()
         
-        # Kullanıcıya tamamlanma mesajı gönder
         completion_text = (
             f"🎉 AIRDROP COMPLETED!\n\n"
             f"💰 Total Earned: {final_balance} Solium\n\n"
@@ -667,7 +650,6 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(completion_text)
         
-        # Admin'e bildirim gönder
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -704,7 +686,7 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute('''
+        cursor.execute(''
             SELECT 
                 user_id, 
                 username, 
@@ -717,7 +699,7 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
             FROM users 
             WHERE bsc_address IS NOT NULL
             ORDER BY created_at DESC
-        ''')
+        '')
         
         wallets = []
         for row in cursor.fetchall():
@@ -736,12 +718,10 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No wallet addresses found!")
             return
             
-        # JSON dosyası oluştur
         filename = f"solium_wallets_{len(wallets)}.json"
         with open(filename, 'w') as f:
             json.dump(wallets, f, indent=2, ensure_ascii=False)
         
-        # Admin'e gönder
         with open(filename, 'rb') as f:
             await update.message.reply_document(
                 document=f,
@@ -749,7 +729,6 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename=filename
             )
         
-        # Temizlik
         os.remove(filename)
         logger.info(f"Exported {len(wallets)} wallets")
         
@@ -771,15 +750,12 @@ def main():
         
         application = Application.builder().token(BOT_TOKEN).build()
         
-        # DÜZELTME: CallbackQueryHandler pattern'ini güncelle
-        handlers = [
-            CommandHandler('start', start),
-            CommandHandler('export_wallets', export_wallets),
-            CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)$'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: handle_wallet_address(u, c) or handle_referral_code(u, c))
-        ]
-        
-        application.add_handlers(handlers)
+        # CallbackQueryHandler pattern'ini düzeltildi
+        application.add_handler(CommandHandler('start', start))
+        application.add_handler(CommandHandler('export_wallets', export_wallets))
+        application.add_handler(CallbackQueryHandler(handle_task_button, pattern='^(show_task_|task_5_wallet|enter_referral|show_balance)$'))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_address))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_referral_code))
         
         logger.info("✅ Bot initialized, starting polling...")
         application.run_polling(
