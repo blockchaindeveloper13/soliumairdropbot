@@ -104,6 +104,7 @@ def init_db():
                 task3_completed BOOLEAN DEFAULT FALSE NOT NULL,
                 task4_completed BOOLEAN DEFAULT FALSE NOT NULL,
                 task5_completed BOOLEAN DEFAULT FALSE NOT NULL,
+                has_referred BOOLEAN DEFAULT FALSE NOT NULL, -- Yeni: Referans kodu girildi mi?
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
@@ -149,35 +150,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🎉 You've already completed the airdrop!")
             return
             
-        # Handle referral
-        referrer_id = None
-        if context.args and context.args[0].startswith('ref'):
-            try:
-                referrer_id = int(context.args[0][3:])
-                if referrer_id == user.id:
-                    await update.message.reply_text("❌ You can't refer yourself!")
-                    referrer_id = None
-            except ValueError:
-                logger.warning(f"Invalid referral ID: {context.args[0]}")
-        
         # Insert or update user
         cursor.execute('''
-            INSERT INTO users (user_id, username, referrer_id)
-            VALUES (%s, %s, %s)
+            INSERT INTO users (user_id, username)
+            VALUES (%s, %s)
             ON CONFLICT (user_id) DO UPDATE
             SET username = EXCLUDED.username
             RETURNING balance
-        ''', (user.id, user.username, referrer_id))
-        
-        # Update referrer if applicable
-        if referrer_id:
-            cursor.execute('''
-                UPDATE users 
-                SET referrals = referrals + 1, 
-                    balance = balance + 20 
-                WHERE user_id = %s
-            ''', (referrer_id,))
-            await update.message.reply_text("🎉 You joined via referral! +20 bonus for both!")
+        ''', (user.id, user.username))
         
         conn.commit()
         await show_task(update, context, 1)
@@ -245,11 +225,17 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
     # Main task button
     keyboard.append([InlineKeyboardButton(task['button'], callback_data=task['callback'])])
     
+    # Referans Kodu Gir butonu (her zaman görünür)
+    keyboard.append([InlineKeyboardButton("🤝 Referans Kodu Gir", callback_data='refer_code')])
+    
     # Navigation buttons
+    nav_buttons = []
     if task_number > 1:
-        keyboard.append([InlineKeyboardButton("◀️ Previous", callback_data=f'task_{task_number-1}')])
+        nav_buttons.append(InlineKeyboardButton("◀️ Previous", callback_data=f'task_{task_number-1}'))
     if task_number < len(tasks):
-        keyboard.append([InlineKeyboardButton("Next ▶️", callback_data=f'task_{task_number+1}')])
+        nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f'task_{task_number+1}'))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
     
     message_text = (
         f"🎯 Task {task_number}/{len(tasks)}\n\n"
@@ -272,7 +258,7 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
                 disable_web_page_preview=True
             )
     except Exception as e:
-        logger.error(f"Error showing task: {str(e)}")
+        logger.error(f"Error showing task: {str(e)}", exc_info=True)
         await context.bot.send_message(
             chat_id=user.id,
             text=message_text,
@@ -286,20 +272,42 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = query.from_user
     data = query.data
     
-    logger.info(f"Task button pressed: {data} by {user.id}")
+    logger.info(f"Task button pressed: {data} by user_id {user.id} (username: {user.username})")
+    
+    # Referans kodu girme
+    if data == 'refer_code':
+        context.user_data['awaiting_refer_code'] = True
+        await query.edit_message_text(
+            "🤝 Lütfen referans kodunu (kullanıcı ID’si) girin:\n\n"
+            "Örnek: 123456789\n\n"
+            "⚠️ Kendi ID’nizi giremezsiniz!"
+        )
+        return
     
     if data.startswith('task_'):
         # Navigation between tasks
-        task_number = int(data.split('_')[1])
-        await show_task(update, context, task_number)
-        return
+        try:
+            task_number = int(data.split('_')[1])
+            logger.debug(f"Navigating to task {task_number}")
+            await show_task(update, context, task_number)
+            return
+        except ValueError as e:
+            logger.error(f"Invalid task navigation data: {data}, error: {str(e)}", exc_info=True)
+            await query.edit_message_text("❌ Invalid task navigation. Please try again.")
+            return
     
     if not data.startswith('task_done_'):
         logger.warning(f"Invalid callback data: {data}")
+        await query.edit_message_text("❌ Invalid action. Please try again.")
         return
     
-    task_number = int(data.split('_')[2])
-    logger.info(f"Processing task completion for task {task_number}")
+    try:
+        task_number = int(data.split('_')[2])
+        logger.info(f"Processing task completion for task {task_number}")
+    except (IndexError, ValueError) as e:
+        logger.error(f"Invalid task_done data: {data}, error: {str(e)}", exc_info=True)
+        await query.edit_message_text("❌ Invalid task data. Please try again.")
+        return
     
     conn = None
     cursor = None
@@ -310,12 +318,15 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Verify user hasn't completed airdrop
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
+        logger.debug(f"User {user.id} participated status: {user_data}")
         
         if not user_data:
+            logger.warning(f"User {user.id} not found in database")
             await query.edit_message_text("❌ User not found. Please /start again.")
             return
             
         if user_data[0]:
+            logger.info(f"User {user.id} already completed airdrop")
             await query.edit_message_text("🎉 You've already completed the airdrop!")
             return
         
@@ -336,6 +347,8 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return
         
+        logger.debug(f"Verification result for task {task_number}: {verification_result}")
+        
         if verification_result and verification_result['success']:
             # Update task completion
             task_column = f'task{task_number}_completed'
@@ -351,6 +364,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
             new_balance = cursor.fetchone()[0]
             conn.commit()
+            logger.info(f"Task {task_number} completed for user {user.id}, new balance: {new_balance}")
             
             await query.edit_message_text(
                 f"✅ Task {task_number} completed!\n"
@@ -362,12 +376,13 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if task_number < 5:
                 await show_task(update, context, task_number + 1)
         else:
+            logger.info(f"Task {task_number} verification failed for user {user.id}: {verification_result.get('message')}")
             await query.edit_message_text(
                 verification_result.get('message', "❌ Verification failed. Try again.")
             )
             
     except Exception as e:
-        logger.error(f"Task completion error: {str(e)}", exc_info=True)
+        logger.error(f"Task completion error for user_id {user.id}, task {task_number}: {str(e)}", exc_info=True)
         await query.edit_message_text("❌ System error. Please try again.")
         if conn:
             conn.rollback()
@@ -379,33 +394,37 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def check_telegram_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: str, chat_type: str):
     try:
-        logger.debug(f"Checking {chat_type} membership for {user_id} in {chat_id}")
+        logger.debug(f"Checking {chat_type} membership for user_id {user_id} in chat_id {chat_id}")
         
         # Try by username first
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
+            logger.debug(f"Membership check by username for {user_id} in {chat_id}: status={member.status}")
             if member.status in ['member', 'administrator', 'creator']:
                 return {'success': True}
         except Exception as e:
-            logger.warning(f"Username check failed: {str(e)}")
+            logger.warning(f"Username check failed for {chat_id}: {str(e)}", exc_info=True)
         
         # Fallback to ID if available
         if chat_id.startswith('@'):
             try:
                 chat = await context.bot.get_chat(chat_id)
+                logger.debug(f"Resolved chat {chat_id} to ID {chat.id}")
                 member = await context.bot.get_chat_member(chat.id, user_id)
+                logger.debug(f"Membership check by chat ID for {user_id} in {chat.id}: status={member.status}")
                 if member.status in ['member', 'administrator', 'creator']:
                     return {'success': True}
             except Exception as e:
-                logger.warning(f"Chat ID check failed: {str(e)}")
+                logger.warning(f"Chat ID check failed for {chat_id}: {str(e)}", exc_info=True)
         
+        logger.info(f"User {user_id} not found in {chat_type} {chat_id}")
         return {
             'success': False,
             'message': f"❌ You haven't joined the {chat_type}!\n\n"
                       f"Please join t.me/{chat_id} and try again."
         }
     except Exception as e:
-        logger.error(f"Membership check error: {str(e)}")
+        logger.error(f"Membership check error for user_id {user_id} in {chat_id}: {str(e)}", exc_info=True)
         return {
             'success': False,
             'message': "❌ Verification service unavailable. Try again later."
@@ -416,6 +435,7 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
     wallet_address = update.message.text.strip()
     
     if not context.user_data.get('awaiting_wallet'):
+        logger.debug(f"User {user.id} sent wallet address without request: {wallet_address}")
         return
     
     logger.info(f"Wallet address received from {user.id}: {wallet_address}")
@@ -435,6 +455,15 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
+        # Check if user has already completed airdrop
+        cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user.id,))
+        user_data = cursor.fetchone()
+        if user_data and user_data[0]:
+            await update.message.reply_text("🎉 You've already completed the airdrop!")
+            context.user_data['awaiting_wallet'] = False
+            return
+        
+        # Save wallet address and complete task 5
         cursor.execute('''
             UPDATE users 
             SET bsc_address = %s,
@@ -446,21 +475,144 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
             RETURNING balance
         ''', (wallet_address, user.id))
         
-        new_balance = cursor.fetchone()[0]
+        result = cursor.fetchone()
+        if not result:
+            logger.warning(f"User {user.id} not found during wallet update")
+            await update.message.reply_text("❌ User not found. Please /start again.")
+            return
+        
+        new_balance = result[0]
         conn.commit()
+        logger.info(f"Wallet address saved for user {user.id}, new balance: {new_balance}")
         
         context.user_data['awaiting_wallet'] = False
         await update.message.reply_text(
             f"✅ Wallet address saved!\n"
             f"+20 Solium added!\n\n"
-            f"💰 Total Balance: {new_balance} Solium"
+            f"💰 Total Balance: {new_balance} Solium\n\n"
+            f"Completing airdrop..."
         )
         
+        # Proceed to complete airdrop
         await complete_airdrop(update, context)
         
     except Exception as e:
-        logger.error(f"Wallet save error: {str(e)}", exc_info=True)
-        await update.message.reply_text("❌ System error. Please try again.")
+        logger.error(f"Wallet save error for user_id {user.id}: {str(e)}", exc_info=True)
+        await update.message.reply_text("❌ System error while saving wallet. Please try again.")
+        if conn:
+            conn.rollback()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
+
+async def handle_refer_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text.strip()
+    
+    if not context.user_data.get('awaiting_refer_code'):
+        logger.debug(f"User {user.id} sent refer code without request: {text}")
+        return
+    
+    logger.info(f"Refer code received from {user.id}: {text}")
+    
+    try:
+        referrer_id = int(text)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid refer code format!\n\n"
+            "Must be a numeric user ID.\n"
+            "Example: 123456789\n\n"
+            "Please try again:"
+        )
+        return
+    
+    conn = None
+    cursor = None
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        # Check if user has already used a refer code
+        cursor.execute("SELECT has_referred, participated FROM users WHERE user_id = %s", (user.id,))
+        user_data = cursor.fetchone()
+        if not user_data:
+            await update.message.reply_text("❌ User not found. Please /start again.")
+            context.user_data['awaiting_refer_code'] = False
+            return
+            
+        if user_data[0]:
+            await update.message.reply_text("❌ You've already used a refer code!")
+            context.user_data['awaiting_refer_code'] = False
+            return
+            
+        if user_data[1]:
+            await update.message.reply_text("❌ You've already completed the airdrop, cannot use refer code!")
+            context.user_data['awaiting_refer_code'] = False
+            return
+        
+        # Check if referrer exists
+        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (referrer_id,))
+        referrer_data = cursor.fetchone()
+        if not referrer_data:
+            await update.message.reply_text("❌ Invalid refer code: User not found!")
+            context.user_data['awaiting_refer_code'] = False
+            return
+            
+        # Check if user is referring themselves
+        if referrer_id == user.id:
+            await update.message.reply_text("❌ You can't refer yourself!")
+            context.user_data['awaiting_refer_code'] = False
+            return
+        
+        # Update referrer
+        cursor.execute('''
+            UPDATE users 
+            SET referrals = referrals + 1,
+                balance = balance + 20,
+                updated_at = NOW()
+            WHERE user_id = %s
+            RETURNING balance
+        ''', (referrer_id,))
+        
+        referrer_balance = cursor.fetchone()[0]
+        
+        # Update user
+        cursor.execute('''
+            UPDATE users 
+            SET referrer_id = %s,
+                balance = balance + 20,
+                has_referred = TRUE,
+                updated_at = NOW()
+            WHERE user_id = %s
+            RETURNING balance
+        ''', (referrer_id, user.id))
+        
+        user_balance = cursor.fetchone()[0]
+        conn.commit()
+        
+        context.user_data['awaiting_refer_code'] = False
+        await update.message.reply_text(
+            f"✅ Refer code accepted!\n"
+            f"+20 Solium added to your balance!\n"
+            f"💰 Your Balance: {user_balance} Solium\n\n"
+            f"Referrer also received +20 Solium."
+        )
+        
+        # Notify referrer
+        try:
+            await context.bot.send_message(
+                chat_id=referrer_id,
+                text=f"🎉 User @{user.username or user.id} used your refer code! +20 Solium added!\n"
+                     f"💰 Your Balance: {referrer_balance} Solium"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to notify referrer {referrer_id}: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Refer code error for user_id {user.id}: {str(e)}", exc_info=True)
+        await update.message.reply_text("❌ System error while processing refer code. Please try again.")
         if conn:
             conn.rollback()
     finally:
@@ -479,6 +631,22 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
+        # Check if already participated
+        cursor.execute("SELECT participated, bsc_address FROM users WHERE user_id = %s", (user.id,))
+        user_data = cursor.fetchone()
+        if not user_data:
+            await update.message.reply_text("❌ User not found. Please /start again.")
+            return
+            
+        if user_data[0]:
+            await update.message.reply_text("🎉 You've already completed the airdrop!")
+            return
+            
+        if not user_data[1]:
+            logger.warning(f"User {user.id} has no wallet address")
+            await update.message.reply_text("❌ No wallet address provided. Please complete task 5.")
+            return
+        
         # Mark as participated and add completion bonus
         cursor.execute('''
             UPDATE users 
@@ -486,43 +654,44 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 balance = balance + 100,
                 updated_at = NOW()
             WHERE user_id = %s
-            RETURNING balance, referrer_id
+            RETURNING balance
         ''', (user.id,))
         
         result = cursor.fetchone()
         if not result:
-            await update.message.reply_text("❌ User not found. Please /start again.")
+            await update.message.reply_text("❌ Error completing airdrop. Please try again.")
             return
             
-        balance, referrer_id = result
+        final_balance = result[0]
         
         # Reward referrer if exists
+        cursor.execute("SELECT referrer_id FROM users WHERE user_id = %s", (user.id,))
+        referrer_id = cursor.fetchone()[0]
         if referrer_id:
             cursor.execute('''
                 UPDATE users 
                 SET balance = balance + 20,
                     updated_at = NOW()
                 WHERE user_id = %s
+                RETURNING balance
             ''', (referrer_id,))
             
+            referrer_balance = cursor.fetchone()[0]
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
-                    text=f"🎉 Your referral @{user.username or user.id} completed the airdrop! +20 Solium added!"
+                    text=f"🎉 Your referral @{user.username or user.id} completed the airdrop! +20 Solium added!\n"
+                         f"💰 Your Balance: {referrer_balance} Solium"
                 )
             except Exception as e:
                 logger.warning(f"Couldn't notify referrer: {str(e)}")
         
         conn.commit()
         
-        # Get final balance
-        cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user.id,))
-        final_balance = cursor.fetchone()[0]
-        
         completion_text = (
             f"🎉 AIRDROP COMPLETED!\n\n"
             f"💰 Total Earned: {final_balance} Solium\n\n"
-            f"Tokens will be distributed after verification.\n\n"
+            f"Tokens will be distributed to your wallet after verification.\n\n"
             f"Thank you for participating!"
         )
         
@@ -538,14 +707,14 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"🚀 New airdrop completion:\n\n"
                      f"User: @{user.username or 'no_username'} ({user.id})\n"
                      f"Balance: {final_balance} Solium\n"
-                     f"Wallet: {get_user_wallet(user.id)}"
+                     f"Wallet: {user_data[1]}"
             )
         except Exception as e:
             logger.error(f"Admin notification failed: {str(e)}")
             
     except Exception as e:
-        logger.error(f"Airdrop completion error: {str(e)}", exc_info=True)
-        await update.message.reply_text("❌ System error during completion.")
+        logger.error(f"Airdrop completion error for user_id {user.id}: {str(e)}", exc_info=True)
+        await update.message.reply_text("❌ System error during completion. Please try again.")
         if conn:
             conn.rollback()
     finally:
@@ -648,8 +817,8 @@ def main():
         handlers = [
             CommandHandler('start', start),
             CommandHandler('export', export_addresses),
-            CallbackQueryHandler(handle_task_button, pattern='^task_'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_address)
+            CallbackQueryHandler(handle_task_button, pattern='^(task_|task_done_|refer_code)'),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: handle_wallet_address(u, c) or handle_refer_code(u, c))
         ]
         
         application.add_handlers(handlers)
