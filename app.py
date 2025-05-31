@@ -297,7 +297,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     if data == 'show_balance':
-        await show_user_balance(update, context)
+        await show_user_balance(update, context, query)
         return
     
     if data == 'task_5_wallet':
@@ -350,9 +350,8 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.error(f"Invalid task navigation data: {data}, error: {e}")
             await query.edit_message_text("❌ Invalid task navigation. Try again.")
 
-async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
+async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
+    user = update.effective_user if not query else query.from_user
     
     logger.info(f"Showing balance for user {user.id}")
     
@@ -372,7 +371,10 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not user_data:
             logger.warning(f"User {user.id} not found in database")
-            await query.answer("❌ User not found. Use /start first.", show_alert=True)
+            if query:
+                await query.answer("❌ User not found. Use /start first.", show_alert=True)
+            else:
+                await update.message.reply_text("❌ User not found. Use /start first.")
             return
         
         balance, referral_code, referral_count, referral_rewards = user_data
@@ -385,11 +387,18 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         logger.info(f"Balance shown for user {user.id}: {balance} Solium")
-        await query.answer(message, show_alert=True)
+        
+        if query:
+            await query.answer(message, show_alert=True)
+        else:
+            await update.message.reply_text(message)
         
     except Exception as e:
         logger.error(f"Balance check error for user_id {user.id}: {e}", exc_info=True)
-        await query.answer("❌ Error checking balance. Try again.", show_alert=True)
+        if query:
+            await query.answer("❌ Error checking balance. Try again.", show_alert=True)
+        else:
+            await update.message.reply_text("❌ Error checking balance. Try again.")
     finally:
         if cursor:
             cursor.close()
@@ -511,6 +520,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             
         referrer_id, referrer_username = referrer_data
         
+        # Update referrer's balance and stats
         cursor.execute('''
             UPDATE users 
             SET 
@@ -524,6 +534,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         ''', (referrer_id,))
         referrer_new_balance = cursor.fetchone()[0]
         
+        # Update user's balance and stats
         cursor.execute('''
             UPDATE users 
             SET 
@@ -757,7 +768,7 @@ def main():
             elif context.user_data.get('awaiting_referral'):
                 await handle_referral_code(update, context)
         
-        # Handlers1
+        # Handlers
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
         application.add_handler(CallbackQueryHandler(handle_task_button))
