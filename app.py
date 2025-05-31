@@ -68,6 +68,7 @@ def init_db():
         
         logger.info("Initializing DB tables...")
         
+        # Önce ana tabloyu oluştur
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -76,7 +77,7 @@ def init_db():
                 balance INTEGER DEFAULT 0 NOT NULL CHECK (balance >= 0),
                 referrals INTEGER DEFAULT 0 NOT NULL CHECK (referrals >= 0),
                 referrer_id BIGINT,
-                referral_code VARCHAR(10) UNIQUE,
+                referral_code VARCHAR(10),
                 referral_count INTEGER DEFAULT 0,
                 referral_rewards INTEGER DEFAULT 0,
                 participated BOOLEAN DEFAULT FALSE NOT NULL,
@@ -92,9 +93,26 @@ def init_db():
             )
         ''')
         
+        # Sütun eklemeleri (eğer yoksa)
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(10)")
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_rewards INTEGER DEFAULT 0")
+        except Exception as e:
+            logger.warning(f"Column addition warning: {e}")
+        
+        # Index'leri oluştur
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_referrer_id ON users(referrer_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_participated ON users(participated)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code)")
+        
+        # referral_code için UNIQUE constraint ekle
+        try:
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
+        except Exception as e:
+            logger.warning(f"Index creation warning: {e}")
+            # Eğer hala sorun olursa, sütunu tekrar eklemeyi dene
+            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(10)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
         
         conn.commit()
         logger.info("✅ Database initialized")
