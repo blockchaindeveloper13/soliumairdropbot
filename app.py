@@ -254,7 +254,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             task_number = int(data.split('_')[1])
             await show_task(update, context, task_number)
         elif data.startswith('task_done_'):
-            task_number = int(data.split('_')[2])
+            task_number = int(data.split('_')[2])  # Fixed: Use index 2 for task number
             next_task = task_number + 1
             tasks = [
                 {'field': 'task1_completed', 'check': lambda: check_telegram_group(context, user_id)},
