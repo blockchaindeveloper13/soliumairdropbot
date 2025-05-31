@@ -757,7 +757,7 @@ def main():
             elif context.user_data.get('awaiting_referral'):
                 await handle_referral_code(update, context)
         
-        # Handlers
+        # Handlers1
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
         application.add_handler(CallbackQueryHandler(handle_task_button))
