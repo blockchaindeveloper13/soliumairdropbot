@@ -1,7 +1,14 @@
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes
+)
 import sqlite3
 import re
 
@@ -152,13 +159,96 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
         # All tasks completed
         await complete_airdrop(update, context)
 
+async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # Check user participation status
+    c.execute("SELECT participated, current_task FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    
+    if user and user['participated']:
+        await query.message.reply_text("❌ You've already completed the airdrop!")
+        conn.close()
+        return
+    
+    if data.startswith('task_'):
+        # Navigation between tasks
+        task_number = int(data.split('_')[1])
+        await show_task(update, context, task_number)
+    
+    elif data.startswith('task_done_'):
+        # Marking task as complete
+        task_number = int(data.split('_')[2])
+        next_task = task_number + 1
+        
+        # Update current task in database
+        c.execute("UPDATE users SET current_task = ? WHERE user_id = ?", (next_task, user_id))
+        conn.commit()
+        
+        if task_number == 5:
+            # Special handling for wallet address entry
+            await query.message.reply_text(
+                "💰 Please send your BSC wallet address:\n\n"
+                "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
+                "⚠️ Double-check your address!"
+            )
+            context.user_data['awaiting_wallet'] = True
+        else:
+            # For normal tasks
+            await query.edit_message_text(
+                text=f"✅ Task {task_number} completed!\n\n"
+                     f"Please proceed to the next task."
+            )
+            # Show next task after short delay
+            await show_task(update, context, next_task)
+    
+    conn.close()
+
+async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text.strip()
+    
+    if not context.user_data.get('awaiting_wallet'):
+        return
+    
+    if re.match(r'^0x[a-fA-F0-9]{40}$', text):
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Save wallet address and complete the task
+        c.execute("UPDATE users SET bsc_address = ?, current_task = 6 WHERE user_id = ?", 
+                 (text, user_id))
+        conn.commit()
+        
+        await update.message.reply_text(
+            "✅ Your wallet address has been saved!\n\n"
+            "Now completing the airdrop process..."
+        )
+        
+        await complete_airdrop(update, context)
+        context.user_data['awaiting_wallet'] = False
+        conn.close()
+    else:
+        await update.message.reply_text(
+            "❌ Invalid BSC wallet address format!\n\n"
+            "Please enter a valid address (42 characters starting with 0x).\n"
+            "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+        )
+
 async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Update balance (100 Solium reward)
+    # Add final reward (100 Solium)
     c.execute("UPDATE users SET balance = balance + 100, participated = 1 WHERE user_id = ?", (user_id,))
     
     # Add referral bonus if applicable
@@ -181,98 +271,12 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = c.fetchone()['balance']
     
     await (update.message or update.callback_query.message).reply_text(
-        f"🎉 CONGRATULATIONS! You've successfully completed the airdrop!\n\n"
+        f"🎉 CONGRATULATIONS! Airdrop completed!\n\n"
         f"💵 Total Earned: {balance} Solium\n\n"
-        f"Rewards will be sent to your registered BSC wallet address."
+        f"Rewards will be sent to your BSC address."
     )
     
     conn.close()
-
-async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    data = query.data
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    
-    # Check user status
-    c.execute("SELECT participated FROM users WHERE user_id = ?", (user_id,))
-    user = c.fetchone()
-    
-    if user and user['participated']:
-        await query.message.reply_text("❌ You've already participated in the airdrop!")
-        conn.close()
-        return
-    
-    if data.startswith('task_'):
-        # Task navigation button
-        task_number = int(data.split('_')[1])
-        await show_task(update, context, task_number)
-    
-    elif data.startswith('task_done_'):
-        # Task completion button
-        task_number = int(data.split('_')[2])
-        
-        if task_number == 5:  # Wallet address request
-            await query.message.reply_text(
-                "💰 Please send your BSC (Binance Smart Chain) wallet address:\n\n"
-                "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
-                "⚠️ Warning: Wrong address = no rewards!"
-            )
-            context.user_data['awaiting_wallet'] = True
-        else:
-            # For other tasks, show confirmation
-            await query.message.reply_text(
-                "✅ Task completed! It will be verified by our team.\n\n"
-                "You can proceed to the next task."
-            )
-        
-        # Move to next task
-        next_task = task_number + 1
-        c.execute("UPDATE users SET current_task = ? WHERE user_id = ?", (next_task, user_id))
-        conn.commit()
-        
-        if task_number != 5:  # Don't show next task for wallet address
-            await show_task(update, context, next_task)
-    
-    conn.close()
-
-async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    text = update.message.text
-    
-    if not context.user_data.get('awaiting_wallet'):
-        return
-    
-    if re.match(r'^0x[a-fA-F0-9]{40}$', text):
-        conn = get_db_connection()
-        c = conn.cursor()
-        
-        # Save wallet address
-        c.execute("UPDATE users SET bsc_address = ? WHERE user_id = ?", (text, user_id))
-        conn.commit()
-        
-        # Complete the final task
-        c.execute("UPDATE users SET current_task = 6 WHERE user_id = ?", (user_id,))
-        conn.commit()
-        
-        await update.message.reply_text(
-            "✅ Your wallet address has been saved!\n\n"
-            "Now completing the airdrop process..."
-        )
-        
-        await complete_airdrop(update, context)
-        context.user_data['awaiting_wallet'] = False
-        conn.close()
-    else:
-        await update.message.reply_text(
-            "❌ Invalid BSC wallet address format!\n\n"
-            "Please enter an address in this format:\n"
-            "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
-        )
 
 async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -286,7 +290,7 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     addresses = [dict(row) for row in c.fetchall()]
     
     if not addresses:
-        await update.message.reply_text("❌ No wallet addresses found in database!")
+        await update.message.reply_text("❌ No wallet addresses found!")
         conn.close()
         return
     
@@ -331,7 +335,8 @@ def main():
     logger.info("🚀 Starting bot in polling mode...")
     application.run_polling(
         drop_pending_updates=True,
-        allowed_updates=['message', 'callback_query']
+        allowed_updates=['message', 'callback_query'],
+        poll_interval=1.0
     )
 
 if __name__ == '__main__':
