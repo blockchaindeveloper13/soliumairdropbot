@@ -350,8 +350,10 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.error(f"Invalid task navigation data: {data}, error: {e}")
             await query.edit_message_text("❌ Invalid task navigation. Try again.")
 
-async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
-    user = update.effective_user if not query else query.from_user
+async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # Önce callback'i boş yanıtla
+    user = query.from_user
     
     logger.info(f"Showing balance for user {user.id}")
     
@@ -371,34 +373,30 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         
         if not user_data:
             logger.warning(f"User {user.id} not found in database")
-            if query:
-                await query.answer("❌ User not found. Use /start first.", show_alert=True)
-            else:
-                await update.message.reply_text("❌ User not found. Use /start first.")
+            await query.edit_message_text("❌ User not found. Use /start first.")
             return
         
         balance, referral_code, referral_count, referral_rewards = user_data
         
+        # Daha kısa mesaj formatı
         message = (
-            f"💰 Your Balance: {balance} Solium\n\n"
-            f"🔗 Your Referral Code: {referral_code}\n"
-            f"👥 Total Referrals: {referral_count}\n"
-            f"🎁 Referral Rewards: {referral_rewards} Solium"
+            f"💰 Balance: {balance} Solium\n"
+            f"🔗 Ref Code: {referral_code}\n"
+            f"👥 Referrals: {referral_count}\n"
+            f"🎁 Rewards: {referral_rewards} Solium"
         )
         
         logger.info(f"Balance shown for user {user.id}: {balance} Solium")
         
-        if query:
-            await query.answer(message, show_alert=True)
-        else:
-            await update.message.reply_text(message)
+        # Mesajı güncelle
+        await query.edit_message_text(
+            text=message,
+            reply_markup=query.message.reply_markup  # Orijinal butonları koru
+        )
         
     except Exception as e:
         logger.error(f"Balance check error for user_id {user.id}: {e}", exc_info=True)
-        if query:
-            await query.answer("❌ Error checking balance. Try again.", show_alert=True)
-        else:
-            await update.message.reply_text("❌ Error checking balance. Try again.")
+        await query.answer("❌ Error showing balance", show_alert=True)
     finally:
         if cursor:
             cursor.close()
