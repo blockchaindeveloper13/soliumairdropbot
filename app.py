@@ -293,7 +293,6 @@ async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_n
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        # Check if user has completed airdrop
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
         
@@ -305,14 +304,13 @@ async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_n
             await query.edit_message_text("🎉 You've already completed the airdrop!")
             return
         
-        # Task-specific verification
         verification_result = None
         if task_number == 1:
             verification_result = await check_telegram_membership(context, user.id, GROUP_ID, 'group')
         elif task_number == 2:
             verification_result = await check_telegram_membership(context, user.id, CHANNEL_ID, 'channel')
         elif task_number in (3, 4):
-            verification_result = {'success': True, 'message': "✅ Task recorded for manual verification"}
+            verification_result = {'success': True, 'message': "✅ Task recorded"}  # Geçici: X task'ları otomatik geç
         elif task_number == 5:
             context.user_data['awaiting_wallet'] = True
             await query.edit_message_text(
