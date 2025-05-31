@@ -18,13 +18,13 @@ from telegram.ext import (
 # Logging setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Debug seviyesine geçtik
 )
 logger = logging.getLogger(__name__)
 
 # Environment variables
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID'))
+ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))  # Varsayılan 0, hata önlemek için
 CHANNEL_ID = os.environ.get('CHANNEL_ID', '@soliumcoin')
 GROUP_ID = os.environ.get('GROUP_ID', '@soliumcoinchat')
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -35,6 +35,7 @@ db_pool = None
 def init_db_pool():
     global db_pool
     try:
+        logger.debug(f"Connecting to database: {DATABASE_URL}")
         url = urlparse(DATABASE_URL)
         db_pool = psycopg2.pool.SimpleConnectionPool(
             1, 20,
@@ -47,14 +48,14 @@ def init_db_pool():
         )
         logger.info("Database connection pool initialized")
     except Exception as e:
-        logger.error(f"Database pool initialization error: {e}")
+        logger.error(f"Database pool initialization error: {e}", exc_info=True)
         raise
 
-# Initialize database
 def init_db():
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
+        logger.debug("Creating users table if not exists")
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -76,7 +77,7 @@ def init_db():
         db_pool.putconn(conn)
         logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.error(f"Database initialization error: {e}", exc_info=True)
         raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,11 +85,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     referrer_id = None
 
+    logger.debug(f"Start command received for user_id: {user_id}, args: {args}")
+
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
 
-        # Check if user already participated
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user_id,))
         user = cursor.fetchone()
 
@@ -101,13 +103,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if args and args[0].startswith("ref"):
             try:
                 referrer_id = int(args[0][3:])
+                logger.debug(f"Referrer ID: {referrer_id}")
                 if referrer_id != user_id:
-                    # Update referrer's count and balance
                     cursor.execute(
                         "UPDATE users SET referrals = referrals + 1, balance = balance + 20 WHERE user_id = %s",
                         (referrer_id,)
                     )
-                    # Add new user with referral bonus
                     cursor.execute("""
                         INSERT INTO users 
                         (user_id, balance, referrer_id) 
@@ -124,7 +125,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
                         (user_id,)
                     )
-            except ValueError:
+            except ValueError as ve:
+                logger.error(f"Invalid referrer ID: {ve}")
                 cursor.execute(
                     "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
                     (user_id,)
@@ -138,13 +140,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         cursor.close()
         db_pool.putconn(conn)
-        await show_task(update, context, 1)  # Show first task
+        await show_task(update, context, 1)
     except Exception as e:
-        logger.error(f"Error in start: {e}")
+        logger.error(f"Error in start: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
 
 async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_number: int):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
+    logger.debug(f"Showing task {task_number} for user_id: {user_id}")
 
     tasks = [
         {
@@ -181,20 +184,16 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
 
     if task_number <= len(tasks):
         task = tasks[task_number-1]
-
         keyboard = [[InlineKeyboardButton(task['button'], callback_data=f'task_done_{task_number}')]]
         if task_number > 1:
             keyboard.append([InlineKeyboardButton("◀️ Previous Task", callback_data=f'task_{task_number-1}')])
-
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         text = (
             f"🎯 Task {task_number}/{len(tasks)}\n\n"
             f"{task['title']}\n\n"
             f"{task['description']}\n\n"
             f"Click '{task['button']}' after completing the task."
         )
-
         try:
             if update.message:
                 await update.message.reply_text(text, reply_markup=reply_markup, disable_web_page_preview=True)
@@ -209,15 +208,13 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
 async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     data = query.data
+    logger.debug(f"Handling task button: {data} for user_id: {user_id}")
 
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
-
-        # Check user participation status
         cursor.execute("SELECT participated, current_task FROM users WHERE user_id = %s", (user_id,))
         user = cursor.fetchone()
 
@@ -228,15 +225,11 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         if data.startswith('task_'):
-            # Navigate between tasks
             task_number = int(data.split('_')[1])
             await show_task(update, context, task_number)
-
         elif data.startswith('task_done_'):
-            # Mark task as complete
             task_number = int(data.split('_')[2])
             next_task = task_number + 1
-
             tasks = [
                 {'field': 'task1_completed', 'check': lambda: check_telegram_group(context, user_id)},
                 {'field': 'task2_completed', 'check': lambda: check_telegram_channel(context, user_id)},
@@ -244,7 +237,6 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 {'field': 'task4_completed', 'check': lambda: manual_check(query, "Pinned post retweeted", 20)},
                 {'field': 'task5_completed', 'check': lambda: wallet_check(context, query, user_id)}
             ]
-
             if task_number <= len(tasks):
                 task = tasks[task_number-1]
                 result = await task['check']()
@@ -268,7 +260,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cursor.close()
         db_pool.putconn(conn)
     except Exception as e:
-        logger.error(f"Error in handle_task_button: {e}")
+        logger.error(f"Error in handle_task_button: {e}", exc_info=True)
         await query.message.reply_text("❌ An error occurred. Please try again later.")
 
 async def check_telegram_group(context, user_id):
@@ -305,11 +297,12 @@ async def wallet_check(context, query, user_id):
         "⚠️ Double-check your address!"
     )
     context.user_data['awaiting_wallet'] = True
-    return {'success': False}  # Wait for wallet submission
+    return {'success': False}
 
 async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
+    logger.debug(f"Received wallet address: {text} for user_id: {user_id}")
 
     if not context.user_data.get('awaiting_wallet'):
         return
@@ -341,23 +334,21 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
         cursor.close()
         db_pool.putconn(conn)
     except Exception as e:
-        logger.error(f"Error in handle_wallet_address: {e}")
+        logger.error(f"Error in handle_wallet_address: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
 
 async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
+    logger.debug(f"Completing airdrop for user_id: {user_id}")
 
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
 
-        # Add final reward (100 Solium)
         cursor.execute(
             "UPDATE users SET balance = balance + 100, participated = TRUE WHERE user_id = %s",
             (user_id,)
         )
-
-        # Add referral bonus
         cursor.execute("SELECT referrer_id FROM users WHERE user_id = %s", (user_id,))
         referrer = cursor.fetchone()
         if referrer and referrer['referrer_id']:
@@ -374,8 +365,6 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error sending referral notification: {e}")
 
         conn.commit()
-
-        # Show final message
         cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
         balance = cursor.fetchone()['balance']
 
@@ -388,7 +377,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         db_pool.putconn(conn)
     except Exception as e:
-        logger.error(f"Error in complete_airdrop: {e}")
+        logger.error(f"Error in complete_airdrop: {e}", exc_info=True)
         await (update.message or update.callback_query.message).reply_text("❌ An error occurred. Please try again later.")
 
 async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -430,13 +419,15 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         db_pool.putconn(conn)
     except Exception as e:
-        logger.error(f"Error in export_addresses: {e}")
+        logger.error(f"Error in export_addresses: {e}", exc_info=True)
         await update.message.reply_text("❌ An error occurred. Please try again later.")
 
 def main():
     try:
+        logger.info("Initializing database...")
         init_db_pool()
         init_db()
+        logger.info("Building application...")
         application = Application.builder().token(BOT_TOKEN).build()
 
         application.add_handler(CommandHandler('start', start))
@@ -451,7 +442,8 @@ def main():
             poll_interval=1.0
         )
     except Exception as e:
-        logger.error(f"Error starting bot: {e}")
+        logger.error(f"Error starting bot: {e}", exc_info=True)
+        raise
 
 if __name__ == '__main__':
     main()
