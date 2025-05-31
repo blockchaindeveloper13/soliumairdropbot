@@ -72,6 +72,18 @@ def init_db():
                 task5_completed BOOLEAN DEFAULT FALSE
             )
         ''')
+        # Add missing columns if they don't exist
+        columns = [
+            ("participated", "BOOLEAN DEFAULT FALSE"),
+            ("current_task", "INTEGER DEFAULT 1"),
+            ("task1_completed", "BOOLEAN DEFAULT FALSE"),
+            ("task2_completed", "BOOLEAN DEFAULT FALSE"),
+            ("task3_completed", "BOOLEAN DEFAULT FALSE"),
+            ("task4_completed", "BOOLEAN DEFAULT FALSE"),
+            ("task5_completed", "BOOLEAN DEFAULT FALSE")
+        ]
+        for column, column_type in columns:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} {column_type}")
         conn.commit()
         logger.info("Database initialized successfully")
         cursor.close()
@@ -224,7 +236,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
-        cursor.execute("SELECT participated, current_task FROM users WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user_id,))
         user = cursor.fetchone()
 
         if user and user['participated']:
