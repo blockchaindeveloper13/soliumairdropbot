@@ -266,6 +266,7 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
             disable_web_page_preview=True
         )
 
+# ... (önceki import’lar ve diğer kodlar aynı)
 async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -285,7 +286,6 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     if data.startswith('task_'):
-        # Navigation between tasks
         try:
             task_number = int(data.split('_')[1])
             logger.debug(f"Navigating to task {task_number}")
@@ -350,7 +350,6 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.debug(f"Verification result for task {task_number}: {verification_result}")
         
         if verification_result and verification_result['success']:
-            # Update task completion
             task_column = f'task{task_number}_completed'
             cursor.execute(f'''
                 UPDATE users 
@@ -372,7 +371,6 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"💰 Total Balance: {new_balance} Solium"
             )
             
-            # Auto-proceed to next task if not wallet task
             if task_number < 5:
                 await show_task(update, context, task_number + 1)
         else:
