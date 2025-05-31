@@ -524,7 +524,7 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         ''', (referrer_id,))
         referrer_new_balance = cursor.fetchone()[0]
         
-        cursor.execute(''
+        cursor.execute('''
             UPDATE users 
             SET 
                 referrer_id = %s,
@@ -750,13 +750,14 @@ def main():
         
         application = Application.builder().token(BOT_TOKEN).build()
         
-        # Message handlers için özel bir fonksiyon
+        # Message handler fonksiyonu
         async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if context.user_data.get('awaiting_wallet'):
                 await handle_wallet_address(update, context)
             elif context.user_data.get('awaiting_referral'):
                 await handle_referral_code(update, context)
         
+        # Handlers
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
         application.add_handler(CallbackQueryHandler(handle_task_button))
