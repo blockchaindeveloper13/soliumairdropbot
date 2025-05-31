@@ -58,29 +58,33 @@ def init_db():
         logger.debug("Creating users table if not exists")
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 bsc_address TEXT,
-                balance INTEGER DEFAULT 0,
-                referrals INTEGER DEFAULT 0,
-                participated BOOLEAN DEFAULT FALSE,
-                current_task INTEGER DEFAULT 1,
-                referrer_id BIGINT,
-                task1_completed BOOLEAN DEFAULT FALSE,
-                task2_completed BOOLEAN DEFAULT FALSE,
-                task3_completed BOOLEAN DEFAULT FALSE,
-                task4_completed BOOLEAN DEFAULT FALSE,
-                task5_completed BOOLEAN DEFAULT FALSE
+                balance INTEGER DEFAULT 0 NOT NULL,
+                referrals INTEGER DEFAULT 0 NOT NULL,
+                participated BOOLEAN DEFAULT FALSE NOT NULL,
+                current_task INTEGER DEFAULT 1 NOT NULL,
+                referrer_id INTEGER,
+                username TEXT,
+                task1_completed BOOLEAN DEFAULT FALSE NOT NULL,
+                task2_completed BOOLEAN DEFAULT FALSE NOT NULL,
+                task3_completed BOOLEAN DEFAULT FALSE NOT NULL,
+                task4_completed BOOLEAN DEFAULT FALSE NOT NULL,
+                task5_completed BOOLEAN DEFAULT FALSE NOT NULL
             )
         ''')
         # Add missing columns if they don't exist
         columns = [
-            ("participated", "BOOLEAN DEFAULT FALSE"),
-            ("current_task", "INTEGER DEFAULT 1"),
-            ("task1_completed", "BOOLEAN DEFAULT FALSE"),
-            ("task2_completed", "BOOLEAN DEFAULT FALSE"),
-            ("task3_completed", "BOOLEAN DEFAULT FALSE"),
-            ("task4_completed", "BOOLEAN DEFAULT FALSE"),
-            ("task5_completed", "BOOLEAN DEFAULT FALSE")
+            ("participated", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("current_task", "INTEGER DEFAULT 1 NOT NULL"),
+            ("task1_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("task2_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("task3_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("task4_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("task5_completed", "BOOLEAN DEFAULT FALSE NOT NULL"),
+            ("bsc_address", "TEXT"),
+            ("referrals", "INTEGER DEFAULT 0 NOT NULL"),
+            ("username", "TEXT")
         ]
         for column, column_type in columns:
             cursor.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} {column_type}")
@@ -94,8 +98,9 @@ def init_db():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    username = update.message.from_user.username
     args = context.args
-    logger.debug(f"Start command received for user_id: {user_id}, args: {args}")
+    logger.debug(f"Start command received for user_id: {user_id}, username: {username}, args: {args}")
 
     try:
         conn = db_pool.getconn()
@@ -128,8 +133,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             (referrer_id,)
                         )
                         cursor.execute(
-                            "INSERT INTO users (user_id, balance, referrer_id) VALUES (%s, 20, %s) ON CONFLICT (user_id) DO NOTHING",
-                            (user_id, referrer_id)
+                            "INSERT INTO users (user_id, balance, referrer_id, username) VALUES (%s, 20, %s, %s) ON CONFLICT (user_id) DO NOTHING",
+                            (user_id, referrer_id, username)
                         )
                         await update.message.reply_text(
                             "🎉 You joined through a referral link! Both you and the referrer received 20 Solium."
@@ -137,24 +142,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         logger.warning(f"Referrer ID {referrer_id} not found")
                         cursor.execute(
-                            "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
-                            (user_id,)
+                            "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            (user_id, username)
                         )
                 else:
                     cursor.execute(
-                        "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
-                        (user_id,)
+                        "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (user_id, username)
                     )
             except ValueError as ve:
                 logger.error(f"Invalid referrer ID: {ve}")
                 cursor.execute(
-                    "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
-                    (user_id,)
+                    "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (user_id, username)
                 )
         else:
             cursor.execute(
-                "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING",
-                (user_id,)
+                "INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (user_id, username)
             )
 
         conn.commit()
@@ -239,7 +244,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user_id,))
         user = cursor.fetchone()
 
-        if user and user['participated']:
+        if user and user[0]:
             await query.message.reply_text("❌ You've already completed the airdrop!")
             cursor.close()
             db_pool.putconn(conn)
@@ -372,14 +377,14 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         cursor.execute("SELECT referrer_id FROM users WHERE user_id = %s", (user_id,))
         referrer = cursor.fetchone()
-        if referrer and referrer['referrer_id']:
+        if referrer and referrer[0]:
             cursor.execute(
                 "UPDATE users SET balance = balance + 20 WHERE user_id = %s",
-                (referrer['referrer_id'],)
+                (referrer[0],)
             )
             try:
                 await context.bot.send_message(
-                    referrer['referrer_id'],
+                    referrer[0],
                     "🎉 Your referral completed the airdrop! You earned +20 Solium."
                 )
             except Exception as e:
@@ -387,7 +392,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
         cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
-        balance = cursor.fetchone()['balance']
+        balance = cursor.fetchone()[0]
 
         await (update.message or update.callback_query.message).reply_text(
             f"🎉 CONGRATULATIONS! Airdrop completed!\n\n"
@@ -411,7 +416,7 @@ async def export_addresses(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
 
         cursor.execute("SELECT user_id, bsc_address FROM users WHERE bsc_address IS NOT NULL")
-        addresses = [{'user_id': row['user_id'], 'bsc_address': row['bsc_address']} for row in cursor.fetchall()]
+        addresses = [{'user_id': row[0], 'bsc_address': row[1]} for row in cursor.fetchall()]
 
         if not addresses:
             await update.message.reply_text("❌ No wallet addresses found!")
