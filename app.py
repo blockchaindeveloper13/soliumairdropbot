@@ -431,37 +431,33 @@ async def check_telegram_membership(context: ContextTypes.DEFAULT_TYPE, user_id:
 async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     wallet_address = update.message.text.strip()
-    
+
     if not context.user_data.get('awaiting_wallet'):
-        logger.debug(f"User {user.id} sent wallet address without request: {wallet_address}")
-        return
-    
-    logger.info(f"Wallet address received from {user.id}: {wallet_address}")
-    
+        return  # Eğer wallet beklenmiyorsa yoksay
+
+    # BSC adres format kontrolü (0x... 42 karakter)
     if not re.match(r'^0x[a-fA-F0-9]{40}$', wallet_address):
         await update.message.reply_text(
-            "❌ Invalid BSC address format!\n\n"
-            "Must be 42 characters starting with 0x.\n"
-            "Example: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F\n\n"
-            "Please try again:"
+            "❌ **Geçersiz BSC adresi!**\n\n"
+            "Lütfen `0x` ile başlayan **42 karakterli** bir adres girin.\n"
+            "Örnek: `0x71C7656EC7ab88b098defB751B7401B5f6d8976F`"
         )
         return
-    
+
     conn = None
-    cursor = None
     try:
         conn = db_pool.getconn()
         cursor = conn.cursor()
-        
-        # Check if user has already completed airdrop
+
+        # Kullanıcının airdrop'u tamamlayıp tamamlamadığını kontrol et
         cursor.execute("SELECT participated FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
-        if user_data and user_data[0]:
-            await update.message.reply_text("🎉 You've already completed the airdrop!")
-            context.user_data['awaiting_wallet'] = False
+
+        if user_data and user_data[0]:  # Zaten tamamlamışsa
+            await update.message.reply_text("🎉 Zaten airdrop'u tamamladınız!")
             return
-        
-        # Save wallet address and complete task 5
+
+        # Cüzdan adresini kaydet ve ödül ver
         cursor.execute('''
             UPDATE users 
             SET bsc_address = %s,
@@ -472,31 +468,22 @@ async def handle_wallet_address(update: Update, context: ContextTypes.DEFAULT_TY
             WHERE user_id = %s
             RETURNING balance
         ''', (wallet_address, user.id))
-        
-        result = cursor.fetchone()
-        if not result:
-            logger.warning(f"User {user.id} not found during wallet update")
-            await update.message.reply_text("❌ User not found. Please /start again.")
-            return
-        
-        new_balance = result[0]
+
+        new_balance = cursor.fetchone()[0]
         conn.commit()
-        logger.info(f"Wallet address saved for user {user.id}, new balance: {new_balance}")
-        
-        context.user_data['awaiting_wallet'] = False
+
         await update.message.reply_text(
-            f"✅ Wallet address saved!\n"
-            f"+20 Solium added!\n\n"
-            f"💰 Total Balance: {new_balance} Solium\n\n"
-            f"Completing airdrop..."
+            f"✅ **Cüzdan adresi kaydedildi!**\n\n"
+            f"💰 **Yeni bakiyeniz:** {new_balance} Solium\n\n"
+            f"Airdrop tamamlanıyor..."
         )
-        
-        # Proceed to complete airdrop
+
+        # Airdrop'u tamamla
         await complete_airdrop(update, context)
-        
+
     except Exception as e:
-        logger.error(f"Wallet save error for user_id {user.id}: {str(e)}", exc_info=True)
-        await update.message.reply_text("❌ System error while saving wallet. Please try again.")
+        logger.error(f"Wallet save error: {e}", exc_info=True)
+        await update.message.reply_text("❌ Bir hata oluştu. Lütfen tekrar deneyin.")
         if conn:
             conn.rollback()
     finally:
