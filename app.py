@@ -217,28 +217,43 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
     
     tasks = [
         {
-            'title': "1️⃣ Join Telegram Group",
-            'description': "Join our Telegram group to stay updated.",
+            'title': "1️⃣ Join Our Telegram Group",
+            'description': (
+                "Join the official Solium Telegram group @soliumcoinchat to stay updated on project announcements and community events.\n\n"
+                "<a href='https://t.me/soliumcoinchat'>Click here to join</a>"
+            ),
             'reward': 20
         },
         {
-            'title': "2️⃣ Follow Telegram Channel",
-            'description': "Follow our channel for news.",
+            'title': "2️⃣ Follow Our Telegram Channel",
+            'description': (
+                "Follow the Solium Telegram channel for the latest news and updates.\n\n"
+                "<a href='https://t.me/soliumcoin'>Click here to follow</a>"
+            ),
             'reward': 20
         },
         {
-            'title': "3️⃣ Follow X Account",
-            'description': "Follow @soliumcoin on X.",
+            'title': "3️⃣ Follow Solium on X",
+            'description': (
+                "Follow our official X account (@soliumcoin) to get real-time updates.\n\n"
+                "<a href='https://x.com/soliumcoin'>Click here to follow</a>"
+            ),
             'reward': 20
         },
         {
-            'title': "4️⃣ Retweet Pinned Post",
-            'description': "Retweet our pinned X post.",
+            'title': "4️⃣ Retweet Our Pinned Post",
+            'description': (
+                "Retweet the pinned post on our X account to spread the word about Solium.\n\n"
+                "<a href='https://x.com/soliumcoin'>Click here to retweet</a>"
+            ),
             'reward': 20
         },
         {
-            'title': "5️⃣ Enter BSC Wallet",
-            'description': "Enter your BSC address to receive rewards.",
+            'title': "5️⃣ Enter Your BSC Wallet",
+            'description': (
+                "Provide your Binance Smart Chain (BSC) wallet address to receive your Solium rewards.\n\n"
+                "Click the 'Enter Address' button below and send your wallet address (e.g., 0x...)."
+            ),
             'reward': 20,
             'button': "Enter Address",
             'callback': "task_5_wallet"
@@ -260,7 +275,7 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
         InlineKeyboardButton("🤝 Referral", callback_data='enter_referral')
     ])
     
-    # Sadece Next butonu ekleniyor
+    # Sadece Next butonu
     if task_number < len(tasks):
         keyboard.append([InlineKeyboardButton("Next ▶️", callback_data=f'show_task_{task_number+1}')])
     
@@ -276,12 +291,14 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
             await update.callback_query.edit_message_text(
                 text=message_text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML',  # HTML için
                 disable_web_page_preview=True
             )
         else:
             await update.message.reply_text(
                 text=message_text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML',  # HTML için
                 disable_web_page_preview=True
             )
     except Exception as e:
@@ -290,6 +307,7 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
             chat_id=user.id,
             text=message_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML',  # HTML için
             disable_web_page_preview=True
         )
 async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
