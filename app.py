@@ -520,17 +520,17 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         
         cursor.execute('''
-            SELECT user_id, username 
+            SELECT user_id 
             FROM users 
             WHERE referral_code = %s
-        ''', (referral_code,))
+        ''', (referral_code,))  # username kaldirildi
         referrer_data = cursor.fetchone()
         
         if not referrer_data:
             await update.message.reply_text("❌ Invalid referral code!")
             return
             
-        referrer_id, referrer_username = referrer_data
+        referrer_id = referrer_data[0]
         
         # Update referrer's balance and stats
         cursor.execute('''
@@ -566,15 +566,15 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"✅ Referral code accepted!\n\n"
             f"💰 +20 Solium added to your balance!\n"
-            f"💵 Your new balance: {user_new_balance} Solium\n\n"
-            f"👥 Referred by: @{referrer_username or referrer_id}"
+            f"💵 Your new balance: {user_new_balance} Solium"
+            # Referred by kismi tamamen kaldirildi
         )
         
         try:
             await context.bot.send_message(
                 chat_id=referrer_id,
                 text=f"🎉 New referral!\n\n"
-                     f"User @{user.username or user.id} used your referral code.\n"
+                     f"A user used your referral code.\n"
                      f"💰 +20 Solium added to your balance!\n"
                      f"💵 Your new balance: {referrer_new_balance} Solium"
             )
@@ -641,17 +641,15 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     referral_rewards = referral_rewards + 20,
                     updated_at = NOW()
                 WHERE user_id = %s
-                RETURNING balance, username
-            ''', (referrer_id,))
+                RETURNING balance
+            ''', (referrer_id,))  # username kaldirildi
             referrer_data = cursor.fetchone()
             referrer_new_balance = referrer_data[0]
-            referrer_username = referrer_data[1]
             
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
                     text=f"🎉 Your referral completed the airdrop!\n\n"
-                         f"User: @{user.username or user.id}\n"
                          f"💰 +20 Solium added to your balance!\n"
                          f"💵 Your new balance: {referrer_new_balance} Solium"
                 )
@@ -677,10 +675,10 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"🚀 New airdrop completion:\n\n"
-                     f"User: @{user.username or user.id}\n"
+                     f"User ID: {user.id}\n"  # username yerine user_id
                      f"Wallet: {bsc_address}\n"
                      f"Balance: {final_balance} Solium\n"
-                     f"Referrer: {'@'+referrer_username if referrer_id else 'None'}"
+                     f"Referrer: {'User ' + str(referrer_id) if referrer_id else 'None'}"
             )
         except Exception as e:
             logger.error(f"Admin notification failed: {e}")
