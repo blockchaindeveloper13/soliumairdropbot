@@ -776,6 +776,76 @@ async def export_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if conn:
             db_pool.putconn(conn)
 
+
+async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    logger.info(f"/message command from {user.id}")
+
+    # Admin kontrolü
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Admin access required!")
+        logger.warning(f"Unauthorized /message attempt by user {user.id}")
+        return
+
+    # Mesaj içeriğini al
+    if not context.args:
+        await update.message.reply_text("❌ Please provide a message!\nExample: /message Join our channel: t.me/soliumchannel")
+        logger.warning("No message provided for /message command")
+        return
+
+    message_text = ' '.join(context.args)
+    
+    conn = None
+    cursor = None
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        # Tüm kullanıcı ID'lerini al
+        cursor.execute("SELECT user_id FROM users")
+        user_ids = [row[0] for row in cursor.fetchall()]
+        
+        if not user_ids:
+            await update.message.reply_text("❌ No users found in database!")
+            logger.info("No users to send message to")
+            return
+        
+        sent_count = 0
+        failed_count = 0
+        
+        # Her kullanıcıya mesaj gönder
+        for user_id in user_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode='HTML',  # Linkler için HTML desteği
+                    disable_web_page_preview=True
+                )
+                sent_count += 1
+                logger.info(f"Message sent to user {user_id}")
+            except Exception as e:
+                failed_count += 1
+                logger.warning(f"Failed to send message to user {user_id}: {e}")
+        
+        # Admin'e özet gönder
+        await update.message.reply_text(
+            f"📬 Message sent!\n"
+            f"✅ Successfully sent to {sent_count} users\n"
+            f"❌ Failed for {failed_count} users\n"
+            f"Message: {message_text}"
+        )
+        logger.info(f"Message broadcast completed: {sent_count} sent, {failed_count} failed")
+        
+    except Exception as e:
+        logger.error(f"Message broadcast error: {e}", exc_info=True)
+        await update.message.reply_text("❌ System error while sending messages. Check logs.")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
+
 def main():
     try:
         logger.info("🚀 Starting Solium Airdrop Bot")
@@ -795,6 +865,7 @@ def main():
         # Handlers
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
+        application.add_handler(CommandHandler('message', message))  # Yeni handler
         application.add_handler(CallbackQueryHandler(handle_task_button))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
