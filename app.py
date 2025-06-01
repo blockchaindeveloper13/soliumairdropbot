@@ -846,6 +846,133 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if conn:
             db_pool.putconn(conn)
 
+async def sendcoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    logger.info(f"/sendcoin command from {user.id}")
+
+    # Admin kontrolü
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Admin access required!")
+        logger.warning(f"Unauthorized /sendcoin attempt by user {user.id}")
+        return
+
+    # Parametre kontrolü
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: /sendcoin <@username> <amount>\nExample: /sendcoin @bluegoldnews 50")
+        logger.warning("Invalid /sendcoin command format")
+        return
+
+    try:
+        target_username = context.args[0].lstrip('@')  # @ işaretini kaldır
+        amount = int(context.args[1])
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+    except ValueError as e:
+        await update.message.reply_text(f"❌ Invalid input: {e}\nUse format, e.g., /sendcoin @bluegoldnews 50")
+        logger.warning(f"Invalid /sendcoin input: {context.args}")
+        return
+
+    conn = None
+    cursor = None
+    try:
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
+        
+        # Kullanıcının varlığını kontrol et
+        cursor.execute("SELECT user_id, balance FROM users WHERE username = %s", (target_username,))
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            await update.message.reply_text(f"❌ User @{target_username} not found in database!")
+            logger.warning(f"User @{target_username} not found for /sendcoin")
+            return
+        
+        target_user_id, current_balance = user_data
+        
+        # Balance'ı güncelle
+        cursor.execute('''
+            UPDATE users 
+            SET balance = balance + %s,
+                updated_at = NOW()
+            WHERE user_id = %s
+            RETURNING balance
+        ''', (amount, target_user_id))
+        
+        new_balance = cursor.fetchone()[0]
+        conn.commit()
+        logger.info(f"Sent {amount} Solium to user @{target_username} (ID: {target_user_id}), new balance: {new_balance}")
+
+        # Kullanıcıya bildirim gönder
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"🎁 Admin sent you {amount} Solium!\n💰 Your new balance: {new_balance} Solium"
+            )
+            logger.info(f"Notification sent to user @{target_username} (ID: {target_user_id})")
+        except Exception as e:
+            logger.warning(f"Failed to notify user @{target_username} (ID: {target_user_id}): {e}")
+
+        # JSON dosyasını güncelle
+        cursor.execute('''
+            SELECT 
+                user_id, 
+                username, 
+                bsc_address, 
+                balance, 
+                referral_code,
+                referral_count,
+                referral_rewards,
+                created_at 
+            FROM users 
+            WHERE bsc_address IS NOT NULL
+            ORDER BY created_at DESC
+        ''')
+        
+        wallets = []
+        for row in cursor.fetchall():
+            wallets.append({
+                'user_id': row[0],
+                'username': row[1] or 'no_username',
+                'wallet_address': row[2],
+                'balance': row[3],
+                'referral_code': row[4],
+                'referral_count': row[5],
+                'referral_rewards': row[6],
+                'registration_date': row[7].isoformat()
+            })
+        
+        if wallets:
+            filename = f"solium_wallets_{len(wallets)}.json"
+            with open(filename, 'w') as f:
+                json.dump(wallets, f, indent=2, ensure_ascii=False)
+            
+            with open(filename, 'rb') as f:
+                await update.message.reply_document(
+                    document=f,
+                    caption=f"📊 Updated wallet export with {len(wallets)} wallets",
+                    filename=filename
+                )
+            
+            os.remove(filename)
+            logger.info(f"Updated wallet export: {len(wallets)} wallets")
+        
+        # Admin'e onay mesajı
+        await update.message.reply_text(
+            f"✅ Sent {amount} Solium to user @{target_username}\n"
+            f"💰 Their new balance: {new_balance} Solium"
+        )
+
+    except Exception as e:
+        logger.error(f"Sendcoin error for username @{target_username}: {e}", exc_info=True)
+        await update.message.reply_text("❌ System error while sending Solium. Check logs.")
+        if conn:
+            conn.rollback()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
+
 def main():
     try:
         logger.info("🚀 Starting Solium Airdrop Bot")
