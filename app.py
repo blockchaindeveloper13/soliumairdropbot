@@ -350,9 +350,7 @@ async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.error(f"Invalid task navigation data: {data}, error: {e}")
             await query.edit_message_text("❌ Invalid task navigation. Try again.")
 
-async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()  # Önce callback'i boş yanıtla
+async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE, query):
     user = query.from_user
     
     logger.info(f"Showing balance for user {user.id}")
@@ -378,7 +376,6 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         balance, referral_code, referral_count, referral_rewards = user_data
         
-        # Daha kısa mesaj formatı
         message = (
             f"💰 Balance: {balance} Solium\n"
             f"🔗 Ref Code: {referral_code}\n"
@@ -388,10 +385,9 @@ async def show_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         logger.info(f"Balance shown for user {user.id}: {balance} Solium")
         
-        # Mesajı güncelle
         await query.edit_message_text(
             text=message,
-            reply_markup=query.message.reply_markup  # Orijinal butonları koru
+            reply_markup=query.message.reply_markup
         )
         
     except Exception as e:
