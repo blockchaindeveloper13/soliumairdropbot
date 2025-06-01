@@ -597,17 +597,17 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT participated, bsc_address, referrer_id 
+            SELECT participated, bsc_address, referrer_id, username 
             FROM users 
             WHERE user_id = %s
-        ''', (user.id,))
+        ''', (user.id,))  # username eklendi
         user_data = cursor.fetchone()
         
         if not user_data:
             await update.message.reply_text("❌ User not found. Use /start.")
             return
             
-        participated, bsc_address, referrer_id = user_data
+        participated, bsc_address, referrer_id, username = user_data
         
         if participated:
             await update.message.reply_text("🎉 Airdrop already completed!")
@@ -637,7 +637,7 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     updated_at = NOW()
                 WHERE user_id = %s
                 RETURNING balance
-            ''', (referrer_id,))  # username kaldirildi
+            ''', (referrer_id,))
             referrer_data = cursor.fetchone()
             referrer_new_balance = referrer_data[0]
             
@@ -670,7 +670,8 @@ async def complete_airdrop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"🚀 New airdrop completion:\n\n"
-                     f"User ID: {user.id}\n"  # username yerine user_id
+                     f"User: @{username or 'Unknown'}\n"
+                     f"User ID: {user.id}\n"
                      f"Wallet: {bsc_address}\n"
                      f"Balance: {final_balance} Solium\n"
                      f"Referrer: {'User ' + str(referrer_id) if referrer_id else 'None'}"
