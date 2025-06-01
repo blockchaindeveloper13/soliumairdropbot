@@ -992,7 +992,8 @@ def main():
         # Handlers
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('export_wallets', export_wallets))
-        application.add_handler(CommandHandler('message', message))  # Yeni handler
+        application.add_handler(CommandHandler('message', message))
+        application.add_handler(CommandHandler('sendcoin', sendcoin))  # Yeni handler
         application.add_handler(CallbackQueryHandler(handle_task_button))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
