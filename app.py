@@ -260,13 +260,9 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
         InlineKeyboardButton("🤝 Referral", callback_data='enter_referral')
     ])
     
-    nav_buttons = []
-    if task_number > 1:
-        nav_buttons.append(InlineKeyboardButton("◀️ Previous", callback_data=f'show_task_{task_number-1}'))
+    # Sadece Next butonu ekleniyor
     if task_number < len(tasks):
-        nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f'show_task_{task_number+1}'))
-    if nav_buttons:
-        keyboard.append(nav_buttons)
+        keyboard.append([InlineKeyboardButton("Next ▶️", callback_data=f'show_task_{task_number+1}')])
     
     message_text = (
         f"🎯 Task {task_number}/{len(tasks)}\n\n"
@@ -296,7 +292,6 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE, task_num
             reply_markup=InlineKeyboardMarkup(keyboard),
             disable_web_page_preview=True
         )
-
 async def handle_task_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
