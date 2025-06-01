@@ -524,9 +524,9 @@ async def handle_referral_code(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("❌ You've already used a referral code!")
             return
             
-        if participated:
-            await update.message.reply_text("❌ Airdrop completed, can't use referral code!")
-            return
+        #if participated:
+            #await update.message.reply_text("❌ Airdrop completed, can't use referral code!")
+            #return
             
         if referral_code == user_referral_code:
             await update.message.reply_text("❌ You can't use your own referral code!")
