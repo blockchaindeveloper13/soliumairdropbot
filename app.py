@@ -139,11 +139,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_pool.getconn()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT participated, current_task, referral_code FROM users WHERE user_id = %s", (user.id,))
+        cursor.execute("SELECT participated, current_task, referral_code, balance FROM users WHERE user_id = %s", (user.id,))
         user_data = cursor.fetchone()
         
-        if user_data and user_data[0]:
-            await update.message.reply_text("🎉 Airdrop already completed!")
+        if user_data and user_data[0]:  # Airdrop tamamlanmış
+            balance = user_data[3]
+            referral_code = user_data[2]
+            message = (
+                f"🎉 Airdrop already completed!\n\n"
+                f"💰 Your Balance: {balance} Solium\n"
+                f"🔗 Your Referral Code: {referral_code}\n\n"
+                f"Use the buttons below to check your balance or enter a referral code."
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("💰 Balance", callback_data='show_balance'),
+                    InlineKeyboardButton("🤝 Referral", callback_data='enter_referral')
+                ]
+            ]
+            await update.message.reply_text(
+                text=message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                disable_web_page_preview=True
+            )
             return
             
         if user_data and not user_data[2]:
